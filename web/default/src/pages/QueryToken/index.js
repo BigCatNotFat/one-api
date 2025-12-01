@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button, Card, Form, Table, Message, Segment, Grid, Statistic, Pagination, Label } from 'semantic-ui-react';
 import { API, showError, showSuccess, timestamp2string } from '../../helpers';
 
@@ -8,6 +8,14 @@ const QueryToken = () => {
   const [loading, setLoading] = useState(false);
   const [activePage, setActivePage] = useState(1);
   const [pageSize] = useState(10);
+
+  useEffect(() => {
+    const prevTitle = document.title;
+    document.title = 'query';
+    return () => {
+      document.title = prevTitle;
+    };
+  }, []);
 
   const handleQuery = async () => {
     const trimmedKey = tokenKey.trim();

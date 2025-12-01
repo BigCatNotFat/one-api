@@ -249,3 +249,32 @@ func SearchLogsByDayAndModel(userId, start, end int) (LogStatistics []*LogStatis
 
 	return LogStatistics, err
 }
+
+func GetTokenLogs(tokenName string, startTimestamp int64, endTimestamp int64, startIdx int, num int) (logs []*Log, err error) {
+	tx := LOG_DB.Where("token_name = ? and type = ?", tokenName, LogTypeConsume)
+	if startTimestamp != 0 {
+		tx = tx.Where("created_at >= ?", startTimestamp)
+	}
+	if endTimestamp != 0 {
+		tx = tx.Where("created_at <= ?", endTimestamp)
+	}
+	err = tx.Order("id desc").Limit(num).Offset(startIdx).Find(&logs).Error
+	return logs, err
+}
+
+func SumTokenUsedQuota(tokenName string, startTimestamp int64, endTimestamp int64) (quota int64) {
+	ifnull := "ifnull"
+	if common.UsingPostgreSQL {
+		ifnull = "COALESCE"
+	}
+	tx := LOG_DB.Table("logs").Select(fmt.Sprintf("%s(sum(quota),0)", ifnull))
+	tx = tx.Where("token_name = ?", tokenName)
+	if startTimestamp != 0 {
+		tx = tx.Where("created_at >= ?", startTimestamp)
+	}
+	if endTimestamp != 0 {
+		tx = tx.Where("created_at <= ?", endTimestamp)
+	}
+	tx.Where("type = ?", LogTypeConsume).Scan(&quota)
+	return quota
+}

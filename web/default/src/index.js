@@ -11,7 +11,33 @@ import { UserProvider } from './context/User';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { StatusProvider } from './context/Status';
+import { useLocation } from 'react-router-dom';
 import './i18n';
+
+const Layout = () => {
+  const location = useLocation();
+  const isQueryPage = location.pathname === '/query';
+
+  if (isQueryPage) {
+    return (
+      <>
+        <App />
+        <ToastContainer />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Header />
+      <Container className={'main-content'}>
+        <App />
+      </Container>
+      <ToastContainer />
+      <Footer />
+    </>
+  );
+};
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
@@ -19,12 +45,7 @@ root.render(
     <StatusProvider>
       <UserProvider>
         <BrowserRouter>
-          <Header />
-          <Container className={'main-content'}>
-            <App />
-          </Container>
-          <ToastContainer />
-          <Footer />
+          <Layout />
         </BrowserRouter>
       </UserProvider>
     </StatusProvider>

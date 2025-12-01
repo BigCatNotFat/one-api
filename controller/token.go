@@ -2,12 +2,15 @@ package controller
 
 import (
 	"fmt"
+	"strings"
+	"time"
 	"github.com/gin-gonic/gin"
 	"github.com/songquanpeng/one-api/common/config"
 	"github.com/songquanpeng/one-api/common/ctxkey"
 	"github.com/songquanpeng/one-api/common/helper"
 	"github.com/songquanpeng/one-api/common/network"
 	"github.com/songquanpeng/one-api/common/random"
+	"github.com/songquanpeng/one-api/middleware"
 	"github.com/songquanpeng/one-api/model"
 	"net/http"
 	"strconv"
@@ -150,6 +153,7 @@ func AddToken(c *gin.Context) {
 		UnlimitedQuota: token.UnlimitedQuota,
 		Models:         token.Models,
 		Subnet:         token.Subnet,
+		QueryPIN:       random.GetRandomNumberString(4), // 生成4位数字PIN码
 	}
 	err = cleanToken.Insert()
 	if err != nil {
@@ -239,6 +243,7 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.UnlimitedQuota = token.UnlimitedQuota
 		cleanToken.Models = token.Models
 		cleanToken.Subnet = token.Subnet
+		cleanToken.QueryPIN = token.QueryPIN
 	}
 	err = cleanToken.Update()
 	if err != nil {
@@ -254,4 +259,103 @@ func UpdateToken(c *gin.Context) {
 		"data":    cleanToken,
 	})
 	return
+}
+
+// QueryTokenQuota 公开查询令牌额度信息（无需登录）
+func QueryTokenQuota(c *gin.Context) {
+	key := c.Query("key")
+	ip := c.ClientIP()
+
+	// 辅助函数：失败响应（带延迟）
+	failWithDelay := func(message string) {
+		// 延迟1-3秒返回，防止暴力破解
+		delay := random.RandRange(1, 4) // 1到3秒随机延迟
+		time.Sleep(time.Duration(delay) * time.Second)
+		middleware.RecordQueryFailure(ip)
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": message,
+		})
+	}
+
+	if key == "" {
+		failWithDelay("请提供API Key")
+		return
+	}
+
+	// 归一化 API Key：去空格，去掉 sk- 前缀，并只保留第一段作为真实 key
+	key = strings.TrimSpace(key)
+	key = strings.TrimPrefix(key, "sk-")
+	parts := strings.Split(key, "-")
+	if len(parts) > 0 {
+		key = parts[0]
+	}
+
+	// 获取令牌信息
+	token, err := model.GetTokenByKey(key)
+	if err != nil {
+		failWithDelay("查询失败，请检查API Key是否正确")
+		return
+	}
+
+	// 查询成功，重置失败计数
+	middleware.ResetQueryFailure(ip)
+
+	// 获取分页参数
+	p, _ := strconv.Atoi(c.Query("p"))
+	if p < 0 {
+		p = 0
+	}
+
+	// 限制只返回最近24小时的数据
+	now := helper.GetTimestamp()
+	oneDayAgo := now - 86400
+	startTimestamp := oneDayAgo
+	endTimestamp := now
+
+	// 如果用户提供了时间范围，也要确保不超过24小时
+	userStart, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	userEnd, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	if userStart > 0 && userStart > oneDayAgo {
+		startTimestamp = userStart
+	}
+	if userEnd > 0 && userEnd < now {
+		endTimestamp = userEnd
+	}
+
+	// 查询使用日志（限制为最近24小时）
+	logs, err := model.GetTokenLogs(token.Name, startTimestamp, endTimestamp, p*10, 10)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "查询日志失败",
+		})
+		return
+	}
+
+	// 计算总使用额度
+	totalUsedQuota := model.SumTokenUsedQuota(token.Name, startTimestamp, endTimestamp)
+
+	// 构建响应数据
+	expiredTime := token.ExpiredTime
+	if expiredTime == -1 {
+		expiredTime = 0
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": gin.H{
+			"name":             token.Name,
+			"status":           token.Status,
+			"remain_quota":     token.RemainQuota,
+			"used_quota":       token.UsedQuota,
+			"unlimited_quota":  token.UnlimitedQuota,
+			"expired_time":     expiredTime,
+			"created_time":     token.CreatedTime,
+			"total_used_quota": totalUsedQuota,
+			"logs":             logs,
+			"time_range":       "最近24小时",
+		},
+	})
 }

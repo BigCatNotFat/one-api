@@ -1,0 +1,13 @@
+data/
+logs/
+*.log
+.git/
+.github/
+node_modules/
+.env
+.env.local
+*.exe
+*.test
+coverage/
+.vscode/
+.idea/

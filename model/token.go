@@ -34,6 +34,7 @@ type Token struct {
 	UsedQuota      int64   `json:"used_quota" gorm:"bigint;default:0"` // used quota
 	Models         *string `json:"models" gorm:"type:text"`            // allowed models
 	Subnet         *string `json:"subnet" gorm:"default:''"`           // allowed subnet
+	QueryPIN       string  `json:"query_pin,omitempty" gorm:"type:char(4);default:''"`  // 4-digit PIN for public query
 }
 
 func GetAllUserTokens(userId int, startIdx int, num int, order string) ([]*Token, error) {
@@ -123,6 +124,16 @@ func GetTokenById(id int) (*Token, error) {
 	return &token, err
 }
 
+func GetTokenByKey(key string) (*Token, error) {
+	if key == "" {
+		return nil, errors.New("key 为空！")
+	}
+	token := Token{}
+	var err error = nil
+	err = DB.First(&token, "`key` = ?", key).Error
+	return &token, err
+}
+
 func (t *Token) Insert() error {
 	var err error
 	err = DB.Create(t).Error
@@ -132,7 +143,7 @@ func (t *Token) Insert() error {
 // Update Make sure your token's fields is completed, because this will update non-zero values
 func (t *Token) Update() error {
 	var err error
-	err = DB.Model(t).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota", "models", "subnet").Updates(t).Error
+	err = DB.Model(t).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota", "models", "subnet", "query_pin").Updates(t).Error
 	return err
 }
 

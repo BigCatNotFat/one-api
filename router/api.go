@@ -30,8 +30,8 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/oauth/wechat/bind", middleware.CriticalRateLimit(), middleware.UserAuth(), auth.WeChatBind)
 		apiRouter.GET("/oauth/email/bind", middleware.CriticalRateLimit(), middleware.UserAuth(), controller.EmailBind)
 		apiRouter.POST("/topup", middleware.AdminAuth(), controller.AdminTopUp)
-		// 公开的令牌查询接口（带限流保护）
-		apiRouter.GET("/query_token", middleware.TokenQueryRateLimit(), controller.QueryTokenQuota)
+		// 公开的令牌查询接口
+		apiRouter.GET("/query_token", controller.QueryTokenQuota)
 
 		userRoute := apiRouter.Group("/user")
 		{

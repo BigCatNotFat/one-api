@@ -56,7 +56,7 @@ const QueryToken = () => {
 
   const renderQuota = (quota) => {
     if (quota === undefined || quota === null) return '未知';
-    return (quota / 500000).toFixed(4) + ' 元';
+    return '$' + (quota / 500000).toFixed(4);
   };
 
   const renderStatus = (status) => {

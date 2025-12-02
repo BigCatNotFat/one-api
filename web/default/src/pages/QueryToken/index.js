@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Button, Card, Form, Table, Message, Segment, Grid, Statistic, Pagination, Label } from 'semantic-ui-react';
+import { Helmet } from 'react-helmet-async';
 import { API, showError, showSuccess, timestamp2string } from '../../helpers';
 
 const QueryToken = () => {
@@ -8,14 +9,6 @@ const QueryToken = () => {
   const [loading, setLoading] = useState(false);
   const [activePage, setActivePage] = useState(1);
   const [pageSize] = useState(10);
-
-  useEffect(() => {
-    const prevTitle = document.title;
-    document.title = 'query';
-    return () => {
-      document.title = prevTitle;
-    };
-  }, []);
 
   const handleQuery = async () => {
     const trimmedKey = tokenKey.trim();
@@ -80,6 +73,9 @@ const QueryToken = () => {
 
   return (
     <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
+      <Helmet>
+        <title>query</title>
+      </Helmet>
       {/* Logo 区域 */}
       <div style={{ textAlign: 'center', marginBottom: '30px', marginTop: '20px' }}>
         <h1 style={{ 

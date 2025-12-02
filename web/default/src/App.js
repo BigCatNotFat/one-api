@@ -73,6 +73,16 @@ function App() {
         showError(message || '无法正常连接至服务器！');
       }
     } catch (error) {
+      // 尝试从缓存中恢复状态，避免完全阻塞页面加载
+      const cachedStatus = localStorage.getItem('status');
+      if (cachedStatus) {
+        try {
+          const data = JSON.parse(cachedStatus);
+          statusDispatch({ type: 'set', payload: data });
+        } catch (e) {
+          console.error('Failed to parse cached status:', e);
+        }
+      }
       showError(error.message || '无法正常连接至服务器！');
     }
   };
@@ -80,8 +90,9 @@ function App() {
   useEffect(() => {
     loadUser();
     loadStatus().then();
+    // 设置页面标题
     let systemName = getSystemName();
-    if (systemName && window.location.pathname !== '/query') {
+    if (systemName) {
       document.title = systemName;
     }
     let logo = getLogo();

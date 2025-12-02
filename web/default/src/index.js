@@ -12,6 +12,7 @@ import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { StatusProvider } from './context/Status';
 import { useLocation } from 'react-router-dom';
+import { HelmetProvider } from 'react-helmet-async';
 import './i18n';
 
 const Layout = () => {
@@ -42,12 +43,14 @@ const Layout = () => {
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
-    <StatusProvider>
-      <UserProvider>
-        <BrowserRouter>
-          <Layout />
-        </BrowserRouter>
-      </UserProvider>
-    </StatusProvider>
+    <HelmetProvider>
+      <StatusProvider>
+        <UserProvider>
+          <BrowserRouter>
+            <Layout />
+          </BrowserRouter>
+        </UserProvider>
+      </StatusProvider>
+    </HelmetProvider>
   </React.StrictMode>
 );

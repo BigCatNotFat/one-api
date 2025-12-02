@@ -81,7 +81,7 @@ function App() {
     loadUser();
     loadStatus().then();
     let systemName = getSystemName();
-    if (systemName) {
+    if (systemName && window.location.pathname !== '/query') {
       document.title = systemName;
     }
     let logo = getLogo();

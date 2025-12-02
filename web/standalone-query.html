@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>API Key 查询 - 硅基之梦</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:sans-serif;background:linear-gradient(135deg,#667eea,#764ba2);min-height:100vh;padding:20px}
+.container{max-width:900px;margin:0 auto;padding-top:40px}
+.logo{text-align:center;margin-bottom:40px;color:white}
+.logo h1{font-size:48px;font-weight:700;margin-bottom:8px;text-shadow:2px 2px 8px rgba(0,0,0,.3)}
+.card{background:white;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);padding:35px;margin-bottom:25px}
+.card h2{font-size:26px;color:#2d3748;margin-bottom:24px;font-weight:600}
+.input-group{display:flex;gap:12px;margin-bottom:20px}
+input{flex:1;padding:14px 18px;border:2px solid #e2e8f0;border-radius:10px;font-size:16px}
+input:focus{outline:none;border-color:#667eea}
+button{padding:14px 36px;background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;border-radius:10px;font-size:16px;font-weight:600;cursor:pointer}
+button:hover:not(:disabled){transform:translateY(-2px)}
+button:disabled{opacity:.6;cursor:not-allowed}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:20px}
+.stat-box{background:linear-gradient(135deg,#f7fafc,#edf2f7);padding:28px;border-radius:12px;text-align:center}
+.stat-value{font-size:36px;font-weight:700;color:#667eea;margin-bottom:8px}
+.stat-label{font-size:14px;color:#718096}
+.info-table{width:100%;border-collapse:collapse;margin-bottom:20px}
+.info-table tr{border-bottom:1px solid #e2e8f0}
+.info-table td{padding:16px 12px}
+.info-table td:first-child{font-weight:600;color:#4a5568;width:140px}
+.status-badge{display:inline-block;padding:6px 14px;border-radius:20px;font-size:13px;font-weight:600}
+.status-active{background:linear-gradient(135deg,#48bb78,#38a169);color:white}
+.status-disabled{background:linear-gradient(135deg,#fc8181,#f56565);color:white}
+.status-expired{background:linear-gradient(135deg,#ed8936,#dd6b20);color:white}
+.logs-table{width:100%;border-collapse:collapse;font-size:14px}
+.logs-table th{background:linear-gradient(135deg,#667eea,#764ba2);color:white;padding:14px 12px;text-align:left}
+.logs-table td{padding:14px 12px;border-bottom:1px solid #e2e8f0}
+.message{padding:18px 20px;border-radius:10px;margin-bottom:20px}
+.message.info{background:linear-gradient(135deg,#bee3f8,#90cdf4);color:#2c5282;border-left:4px solid #3182ce}
+.message.error{background:linear-gradient(135deg,#fed7d7,#fc8181);color:#742a2a;border-left:4px solid #e53e3e}
+.message.success{background:linear-gradient(135deg,#c6f6d5,#9ae6b4);color:#22543d;border-left:4px solid #38a169}
+.message strong{display:block;margin-bottom:8px}
+.message ul{margin-top:12px;margin-left:20px}
+.loading{text-align:center;padding:40px 20px}
+.spinner{border:4px solid #e2e8f0;border-top:4px solid #667eea;border-radius:50%;width:50px;height:50px;animation:spin 1s linear infinite;margin:0 auto 16px}
+@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="logo"><h1>硅基之梦</h1><p>Silicon Dream</p></div>
+<div class="card">
+<h2> API Key 查询</h2>
+<div class="input-group">
+<input type="text" id="apiKeyInput" placeholder="sk-xxxxxxxxxx" onkeypress="if(event.key==='Enter') queryToken()">
+<button onclick="queryToken()" id="queryBtn">查询</button>
+</div>
+<div id="instructions" class="message info"><strong>使用说明</strong><ul><li>输入您的 API Key</li><li>点击查询按钮</li><li>无需登录</li></ul></div>
+<div id="loading" class="loading hidden"><div class="spinner"></div><p>正在查询...</p></div>
+<div id="error" class="message error hidden"></div>
+<div id="success" class="message success hidden"></div>
+</div>
+<div id="results" class="hidden">
+<div class="card"><h2>额度统计</h2><div class="stats"><div class="stat-box"><div class="stat-value" id="remainQuota">-</div><div class="stat-label">剩余额度</div></div><div class="stat-box"><div class="stat-value" id="usedQuota">-</div><div class="stat-label">已使用</div></div></div></div>
+<div class="card"><h2>详情</h2><table class="info-table"><tr><td>名称</td><td id="tokenName">-</td></tr><tr><td>状态</td><td id="tokenStatus">-</td></tr><tr><td>剩余额度</td><td id="tokenRemain">-</td></tr><tr><td>已用额度</td><td id="tokenUsed">-</td></tr><tr><td>过期时间</td><td id="tokenExpire">-</td></tr><tr><td>创建时间</td><td id="tokenCreated">-</td></tr></table></div>
+<div class="card"><h2>使用记录 <span id="timeRange"></span></h2><div id="logsContainer"></div></div>
+</div>
+</div>
+<script>
+function formatQuota(q){return q==null?'未知':'$'+(q/500000).toFixed(4)}
+function formatTimestamp(t){return t?new Date(t*1000).toLocaleString('zh-CN'):'-'}
+function getStatusBadge(s){const m={1:{t:'启用',c:'status-active'},2:{t:'禁用',c:'status-disabled'},3:{t:'已过期',c:'status-expired'},4:{t:'额度已用尽',c:'status-expired'}};const i=m[s]||{t:'未知',c:'status-disabled'};return `<span class="status-badge ${i.c}">${i.t}</span>`}
+function showMessage(type,msg){document.getElementById('error').classList.add('hidden');document.getElementById('success').classList.add('hidden');if(type==='error'){const e=document.getElementById('error');e.innerHTML='<strong> 失败</strong>'+msg;e.classList.remove('hidden')}else if(type==='success'){const e=document.getElementById('success');e.innerHTML='<strong> 成功</strong>'+msg;e.classList.remove('hidden')}}
+async function queryToken(){const k=document.getElementById('apiKeyInput').value.trim();if(!k){showMessage('error','<p>请输入 API Key</p>');return}
+document.getElementById('loading').classList.remove('hidden');document.getElementById('instructions').classList.add('hidden');document.getElementById('results').classList.add('hidden');document.getElementById('queryBtn').disabled=true;showMessage('','');
+try{const r=await fetch(`/api/query_token?key=${encodeURIComponent(k)}&p=0`);const d=await r.json();if(d.success&&d.data){displayResults(d.data);showMessage('success','<p>查询成功</p>')}else{showMessage('error',`<p>${d.message||'查询失败'}</p>`);document.getElementById('instructions').classList.remove('hidden')}}catch(e){showMessage('error',`<p>请求失败:${e.message}</p>`);document.getElementById('instructions').classList.remove('hidden')}finally{document.getElementById('loading').classList.add('hidden');document.getElementById('queryBtn').disabled=false}}
+function displayResults(d){document.getElementById('results').classList.remove('hidden');document.getElementById('remainQuota').textContent=formatQuota(d.remain_quota);document.getElementById('usedQuota').textContent=formatQuota(d.used_quota);document.getElementById('tokenName').textContent=d.name||'-';document.getElementById('tokenStatus').innerHTML=getStatusBadge(d.status);if(d.unlimited_quota){document.getElementById('tokenRemain').innerHTML='<span class="status-badge status-active">无限</span>'}else{document.getElementById('tokenRemain').textContent=formatQuota(d.remain_quota)}
+document.getElementById('tokenUsed').textContent=formatQuota(d.used_quota);if(d.expired_time===0||d.expired_time===-1){document.getElementById('tokenExpire').textContent='永不过期'}else{document.getElementById('tokenExpire').textContent=formatTimestamp(d.expired_time)}
+document.getElementById('tokenCreated').textContent=formatTimestamp(d.created_time);if(d.time_range){document.getElementById('timeRange').textContent='('+d.time_range+')'}
+const c=document.getElementById('logsContainer');if(d.logs&&d.logs.length>0){let h='<table class="logs-table"><thead><tr><th>时间</th><th>模型</th><th>提示</th><th>补全</th><th>消耗</th><th>耗时</th></tr></thead><tbody>';d.logs.forEach(l=>{h+=`<tr><td>${formatTimestamp(l.created_at)}</td><td><code>${l.model_name||'-'}</code></td><td>${l.prompt_tokens||0}</td><td>${l.completion_tokens||0}</td><td>${formatQuota(l.quota)}</td><td>${l.duration||'-'}</td></tr>`});h+='</tbody></table>';c.innerHTML=h}else{c.innerHTML='<div class="message info"><strong>ℹ 暂无记录</strong></div>'}}
+window.addEventListener('DOMContentLoaded',()=>document.getElementById('apiKeyInput').focus());
+</script>
+</body>
+</html>

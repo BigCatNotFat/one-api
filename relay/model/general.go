@@ -64,8 +64,9 @@ type GeneralOpenAIRequest struct {
 	Size    string  `json:"size,omitempty"`
 	Style   *string `json:"style,omitempty"`
 	// Others
-	Instruction string `json:"instruction,omitempty"`
-	NumCtx      int    `json:"num_ctx,omitempty"`
+	Instruction string                 `json:"instruction,omitempty"`
+	NumCtx      int                    `json:"num_ctx,omitempty"`
+	ExtraBody   map[string]interface{} `json:"extra_body,omitempty"`
 }
 
 func (r GeneralOpenAIRequest) ParseInput() []string {

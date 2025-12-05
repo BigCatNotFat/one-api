@@ -66,6 +66,15 @@ func ConvertRequest(textRequest model.GeneralOpenAIRequest) *ChatRequest {
 			MaxOutputTokens: textRequest.MaxTokens,
 		},
 	}
+	
+	// Handle extra_body parameters for Gemini-specific features
+	if textRequest.ExtraBody != nil {
+		if googleConfig, ok := textRequest.ExtraBody["google"].(map[string]interface{}); ok {
+			if thinkingConfig, ok := googleConfig["thinking_config"].(map[string]interface{}); ok {
+				geminiRequest.GenerationConfig.ThinkingConfig = thinkingConfig
+			}
+		}
+	}
 	if textRequest.ResponseFormat != nil {
 		if mimeType, ok := mimeTypeMap[textRequest.ResponseFormat.Type]; ok {
 			geminiRequest.GenerationConfig.ResponseMimeType = mimeType
@@ -259,12 +268,32 @@ func responseGeminiChat2OpenAI(response *ChatResponse) *openai.TextResponse {
 				choice.Message.ToolCalls = getToolCalls(&candidate)
 			} else {
 				var builder strings.Builder
-				for _, part := range candidate.Content.Parts {
-					if i > 0 {
+				isInThought := false
+				for partIdx, part := range candidate.Content.Parts {
+					if partIdx > 0 {
 						builder.WriteString("\n")
 					}
+					
+					// Add <thought> tag at the beginning of thought content
+					if part.Thought != nil && *part.Thought && !isInThought {
+						builder.WriteString("<thought>")
+						isInThought = true
+					}
+					
+					// Add </thought> tag when transitioning from thought to non-thought
+					if (part.Thought == nil || !*part.Thought) && isInThought {
+						builder.WriteString("</thought>")
+						isInThought = false
+					}
+					
 					builder.WriteString(part.Text)
 				}
+				
+				// Close thought tag if still open at the end
+				if isInThought {
+					builder.WriteString("</thought>")
+				}
+				
 				choice.Message.Content = builder.String()
 			}
 		} else {
@@ -276,15 +305,41 @@ func responseGeminiChat2OpenAI(response *ChatResponse) *openai.TextResponse {
 	return &fullTextResponse
 }
 
-func streamResponseGeminiChat2OpenAI(geminiResponse *ChatResponse) *openai.ChatCompletionsStreamResponse {
+func streamResponseGeminiChat2OpenAI(geminiResponse *ChatResponse, modelName string, isFirstThoughtChunk *bool, isInThought *bool) *openai.ChatCompletionsStreamResponse {
 	var choice openai.ChatCompletionsStreamResponseChoice
-	choice.Delta.Content = geminiResponse.GetResponseText()
+	content := geminiResponse.GetResponseText()
+	choice.Delta.Role = "assistant"
+	
+	// Check if this is thought content
+	if len(geminiResponse.Candidates) > 0 && len(geminiResponse.Candidates[0].Content.Parts) > 0 {
+		part := geminiResponse.Candidates[0].Content.Parts[0]
+		if part.Thought != nil && *part.Thought {
+			// This is thought content - add <thought> tag on first chunk
+			if !*isInThought {
+				content = "<thought>" + content
+				*isInThought = true
+				*isFirstThoughtChunk = true
+			}
+			choice.Delta.ExtraContent = map[string]interface{}{
+				"google": map[string]interface{}{
+					"thought": true,
+				},
+			}
+		} else if *isInThought {
+			// This is the first non-thought content after thought - add </thought> tag
+			content = "</thought>" + content
+			*isInThought = false
+		}
+	}
+	
+	choice.Delta.Content = content
+	
 	//choice.FinishReason = &constant.StopFinishReason
 	var response openai.ChatCompletionsStreamResponse
 	response.Id = fmt.Sprintf("chatcmpl-%s", random.GetUUID())
 	response.Created = helper.GetTimestamp()
 	response.Object = "chat.completion.chunk"
-	response.Model = "gemini"
+	response.Model = modelName
 	response.Choices = []openai.ChatCompletionsStreamResponseChoice{choice}
 	return &response
 }
@@ -306,12 +361,16 @@ func embeddingResponseGemini2OpenAI(response *EmbeddingResponse) *openai.Embeddi
 	return &openAIEmbeddingResponse
 }
 
-func StreamHandler(c *gin.Context, resp *http.Response) (*model.ErrorWithStatusCode, string) {
+func StreamHandler(c *gin.Context, resp *http.Response, modelName string) (*model.ErrorWithStatusCode, string) {
 	responseText := ""
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Split(bufio.ScanLines)
 
 	common.SetEventStreamHeaders(c)
+	
+	// Track thought state across chunks
+	isFirstThoughtChunk := false
+	isInThought := false
 
 	for scanner.Scan() {
 		data := scanner.Text()
@@ -328,8 +387,13 @@ func StreamHandler(c *gin.Context, resp *http.Response) (*model.ErrorWithStatusC
 			logger.SysError("error unmarshalling stream response: " + err.Error())
 			continue
 		}
+		
+		// Debug: log raw response to see Gemini's format
+		if config.DebugEnabled {
+			logger.SysLog("Gemini raw response: " + data)
+		}
 
-		response := streamResponseGeminiChat2OpenAI(&geminiResponse)
+		response := streamResponseGeminiChat2OpenAI(&geminiResponse, modelName, &isFirstThoughtChunk, &isInThought)
 		if response == nil {
 			continue
 		}

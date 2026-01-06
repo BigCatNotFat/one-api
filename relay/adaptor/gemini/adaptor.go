@@ -26,6 +26,8 @@ func (a *Adaptor) Init(meta *meta.Meta) {
 func (a *Adaptor) GetRequestURL(meta *meta.Meta) (string, error) {
 	defaultVersion := config.GeminiVersion
 	if strings.Contains(meta.ActualModelName, "gemini-2.0") ||
+		strings.Contains(meta.ActualModelName, "gemini-3") ||
+		strings.Contains(meta.ActualModelName, "gemini-2.5") ||
 		strings.Contains(meta.ActualModelName, "gemini-1.5") {
 		defaultVersion = "v1beta"
 	}
@@ -61,8 +63,8 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, relayMode int, request *model.G
 		geminiEmbeddingRequest := ConvertEmbeddingRequest(*request)
 		return geminiEmbeddingRequest, nil
 	default:
-		geminiRequest := ConvertRequest(*request)
-		return geminiRequest, nil
+		geminiRequest, err := ConvertRequest(*request)
+		return geminiRequest, err
 	}
 }
 

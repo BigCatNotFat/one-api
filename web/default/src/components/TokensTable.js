@@ -8,6 +8,7 @@ import {
   Pagination,
   Popup,
   Table,
+  Checkbox,
 } from 'semantic-ui-react';
 import { Link } from 'react-router-dom';
 import {
@@ -87,6 +88,7 @@ const TokensTable = () => {
   const [showTopUpModal, setShowTopUpModal] = useState(false);
   const [targetTokenIdx, setTargetTokenIdx] = useState(0);
   const [orderBy, setOrderBy] = useState('');
+  const [selectedTokens, setSelectedTokens] = useState([]);
 
   const loadTokens = async (startIdx) => {
     const res = await API.get(`/api/token/?p=${startIdx}&order=${orderBy}`);
@@ -301,6 +303,85 @@ const TokensTable = () => {
     setActivePage(1);
   };
 
+  const handleCheck = (id) => {
+    if (selectedTokens.includes(id)) {
+      setSelectedTokens(selectedTokens.filter((t) => t !== id));
+    } else {
+      setSelectedTokens([...selectedTokens, id]);
+    }
+  };
+
+  const handleCheckAll = () => {
+    const currentPageTokens = tokens
+      .slice((activePage - 1) * ITEMS_PER_PAGE, activePage * ITEMS_PER_PAGE)
+      .filter((t) => !t.deleted);
+    const currentPageIds = currentPageTokens.map((t) => t.id);
+    const allSelected = currentPageIds.every((id) =>
+      selectedTokens.includes(id)
+    );
+
+    if (allSelected) {
+      setSelectedTokens(
+        selectedTokens.filter((id) => !currentPageIds.includes(id))
+      );
+    } else {
+      const newSelected = new Set([...selectedTokens, ...currentPageIds]);
+      setSelectedTokens(Array.from(newSelected));
+    }
+  };
+
+  const bulkDelete = async () => {
+    if (selectedTokens.length === 0) return;
+    if (!window.confirm(`确定要删除选中的 ${selectedTokens.length} 个令牌吗？`))
+      return;
+    setLoading(true);
+    let successCount = 0;
+    for (const id of selectedTokens) {
+      try {
+        await API.delete(`/api/token/${id}/`);
+        successCount++;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    showSuccess(`成功删除 ${successCount} 个令牌`);
+    setSelectedTokens([]);
+    await refresh();
+  };
+
+  const bulkExport = async () => {
+    setLoading(true);
+    try {
+      let allData = [];
+      let p = 0;
+      while (true) {
+        const res = await API.get(`/api/token/?p=${p}`);
+        const { success, data } = res.data;
+        if (success && data && data.length > 0) {
+          allData.push(...data);
+          if (data.length < ITEMS_PER_PAGE) break;
+          p++;
+        } else {
+          break;
+        }
+      }
+
+      const jsonString = JSON.stringify(allData, null, 2);
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `tokens_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showSuccess('导出成功');
+    } catch (e) {
+      showError('导出失败: ' + e.message);
+    }
+    setLoading(false);
+  };
+
   return (
     <>
       <Form onSubmit={searchTokens}>
@@ -318,6 +399,26 @@ const TokensTable = () => {
       <Table basic={'very'} compact size='small'>
         <Table.Header>
           <Table.Row>
+            <Table.HeaderCell>
+              <Checkbox
+                onChange={handleCheckAll}
+                checked={
+                  tokens
+                    .slice(
+                      (activePage - 1) * ITEMS_PER_PAGE,
+                      activePage * ITEMS_PER_PAGE
+                    )
+                    .filter((t) => !t.deleted).length > 0 &&
+                  tokens
+                    .slice(
+                      (activePage - 1) * ITEMS_PER_PAGE,
+                      activePage * ITEMS_PER_PAGE
+                    )
+                    .filter((t) => !t.deleted)
+                    .every((t) => selectedTokens.includes(t.id))
+                }
+              />
+            </Table.HeaderCell>
             <Table.HeaderCell
               style={{ cursor: 'pointer' }}
               onClick={() => {
@@ -397,6 +498,12 @@ const TokensTable = () => {
 
               return (
                 <Table.Row key={token.id}>
+                  <Table.Cell>
+                    <Checkbox
+                      onChange={() => handleCheck(token.id)}
+                      checked={selectedTokens.includes(token.id)}
+                    />
+                  </Table.Cell>
                   <Table.Cell>
                     {token.name ? token.name : t('token.table.no_name')}
                   </Table.Cell>
@@ -495,10 +602,18 @@ const TokensTable = () => {
 
         <Table.Footer>
           <Table.Row>
-            <Table.HeaderCell colSpan='7'>
+            <Table.HeaderCell colSpan='8'>
               <Button size='small' as={Link} to='/token/add' loading={loading}>
                 {t('token.buttons.add')}
               </Button>
+              <Button size='small' onClick={bulkExport} loading={loading}>
+                {t('token.buttons.export') || '导出批量令牌'}
+              </Button>
+              {selectedTokens.length > 0 && (
+                <Button size='small' onClick={bulkDelete} loading={loading}>
+                  {t('token.buttons.delete_selected') || '删除选中令牌'}
+                </Button>
+              )}
               <Button size='small' onClick={refresh} loading={loading}>
                 {t('token.buttons.refresh')}
               </Button>

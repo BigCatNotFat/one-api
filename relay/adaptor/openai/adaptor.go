@@ -26,6 +26,86 @@ type Adaptor struct {
 	ChannelType int
 }
 
+// geminiUnsupportedSchemaKeys contains JSON Schema fields that Gemini does not support.
+// Gemini only supports a subset of OpenAPI Schema, not full JSON Schema.
+var geminiUnsupportedSchemaKeys = map[string]bool{
+	"additionalProperties":   true,
+	"unevaluatedProperties":  true,
+	"$ref":                   true,
+	"$schema":                true,
+	"$id":                    true,
+	"$defs":                  true,
+	"definitions":            true,
+	"patternProperties":      true,
+	"propertyNames":          true,
+	"unevaluatedItems":       true,
+	"contains":               true,
+	"minContains":            true,
+	"maxContains":            true,
+	"if":                     true,
+	"then":                   true,
+	"else":                   true,
+	"allOf":                  true,
+	"anyOf":                  true,
+	"oneOf":                  true,
+	"not":                    true,
+	"dependentSchemas":       true,
+	"dependentRequired":      true,
+	"const":                  true,
+	"contentEncoding":        true,
+	"contentMediaType":       true,
+	"contentSchema":          true,
+	"deprecated":             true,
+	"readOnly":               true,
+	"writeOnly":              true,
+	"examples":               true,
+	"default":                true,
+	"$comment":               true,
+	"$vocabulary":            true,
+	"$anchor":                true,
+	"$dynamicRef":            true,
+	"$dynamicAnchor":         true,
+	"minLength":              true,
+	"maxLength":              true,
+	"pattern":                true,
+	"minimum":                true,
+	"maximum":                true,
+	"exclusiveMinimum":       true,
+	"exclusiveMaximum":       true,
+	"multipleOf":             true,
+	"minItems":               true,
+	"maxItems":               true,
+	"uniqueItems":            true,
+	"minProperties":          true,
+	"maxProperties":          true,
+}
+
+func sanitizeGeminiOpenAICompatibleSchema(v any) any {
+	// Google Gemini OpenAI-compat endpoint does NOT accept full JSON Schema either.
+	// It may error out after translating to function_declarations with:
+	// Unknown name "additionalProperties" at 'tools[0].function_declarations[0].parameters'
+	// We recursively drop unsupported keys to avoid Gemini 400 errors.
+	switch x := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, vv := range x {
+			if geminiUnsupportedSchemaKeys[k] {
+				continue
+			}
+			out[k] = sanitizeGeminiOpenAICompatibleSchema(vv)
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(x))
+		for _, item := range x {
+			out = append(out, sanitizeGeminiOpenAICompatibleSchema(item))
+		}
+		return out
+	default:
+		return v
+	}
+}
+
 func (a *Adaptor) Init(meta *meta.Meta) {
 	a.ChannelType = meta.ChannelType
 }
@@ -91,6 +171,16 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, relayMode int, request *model.G
 			request.StreamOptions = &model.StreamOptions{}
 		}
 		request.StreamOptions.IncludeUsage = true
+	}
+	// Extra compatibility for Gemini OpenAI compatible channel:
+	// sanitize tool/function schemas to avoid Gemini rejecting OpenAI-style JSON schema fields.
+	// Note: many deployments use OpenAI-like channel types but still route gemini-* models to Google's OpenAI-compatible endpoint.
+	// So we key off the model name prefix as well.
+	if a.ChannelType == channeltype.GeminiOpenAICompatible || strings.HasPrefix(request.Model, "gemini-") {
+		for i := range request.Tools {
+			request.Tools[i].Function.Parameters = sanitizeGeminiOpenAICompatibleSchema(request.Tools[i].Function.Parameters)
+		}
+		request.Functions = sanitizeGeminiOpenAICompatibleSchema(request.Functions)
 	}
 	return request, nil
 }

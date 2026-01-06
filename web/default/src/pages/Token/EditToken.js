@@ -35,6 +35,7 @@ const EditToken = () => {
   };
   const [inputs, setInputs] = useState(originInputs);
   const { name, remain_quota, expired_time, unlimited_quota } = inputs;
+  const [tokenCount, setTokenCount] = useState(1);
   const navigate = useNavigate();
   const handleInputChange = (e, { name, value }) => {
     setInputs((inputs) => ({ ...inputs, [name]: value }));
@@ -136,19 +137,44 @@ const EditToken = () => {
         ...localInputs,
         id: parseInt(tokenId),
       });
-    } else {
-      res = await API.post(`/api/token/`, localInputs);
-    }
-    const { success, message } = res.data;
-    if (success) {
-      if (isEdit) {
+      const { success, message } = res.data;
+      if (success) {
         showSuccess(t('token.edit.messages.update_success'));
       } else {
-        showSuccess(t('token.edit.messages.create_success'));
-        setInputs(originInputs);
+        showError(message);
       }
     } else {
-      showError(message);
+      let successCount = 0;
+      let errorMessage = '';
+      for (let i = 0; i < tokenCount; i++) {
+        let tempInputs = { ...localInputs };
+        if (tokenCount > 1) {
+          tempInputs.name = `${localInputs.name} ${i + 1}`;
+        }
+        try {
+          res = await API.post(`/api/token/`, tempInputs);
+          if (res.data.success) {
+            successCount++;
+          } else {
+            errorMessage = res.data.message;
+            break;
+          }
+        } catch (error) {
+          errorMessage = error.message;
+          break;
+        }
+      }
+
+      if (successCount > 0) {
+        showSuccess(
+          t('token.edit.messages.create_success') +
+            (tokenCount > 1 ? ` (${successCount}/${tokenCount})` : '')
+        );
+        setInputs(originInputs);
+        setTokenCount(1);
+      } else {
+        showError(errorMessage || 'Failed to create token');
+      }
     }
   };
 
@@ -171,6 +197,20 @@ const EditToken = () => {
                 required={!isEdit}
               />
             </Form.Field>
+            {!isEdit && (
+              <Form.Field>
+                <Form.Input
+                  label={t('token.edit.count')}
+                  name='token_count'
+                  placeholder={t('token.edit.count_placeholder')}
+                  onChange={(e, { value }) => setTokenCount(parseInt(value))}
+                  value={tokenCount}
+                  autoComplete='new-password'
+                  type='number'
+                  min={1}
+                />
+              </Form.Field>
+            )}
             <Form.Field>
               <Form.Dropdown
                 label={t('token.edit.models')}

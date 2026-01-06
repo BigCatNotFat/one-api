@@ -5,6 +5,7 @@ type ChatRequest struct {
 	SafetySettings    []ChatSafetySettings `json:"safety_settings,omitempty"`
 	GenerationConfig  ChatGenerationConfig `json:"generation_config,omitempty"`
 	Tools             []ChatTools          `json:"tools,omitempty"`
+	ToolConfig        *ToolConfig          `json:"tool_config,omitempty"`
 	SystemInstruction *ChatContent         `json:"system_instruction,omitempty"`
 }
 
@@ -43,13 +44,21 @@ type InlineData struct {
 type FunctionCall struct {
 	FunctionName string `json:"name"`
 	Arguments    any    `json:"args"`
+	// Note: thoughtSignature should NOT be inside functionCall, it belongs to Part level
+}
+
+type FunctionResponse struct {
+	FunctionName string `json:"name"`
+	Response     any    `json:"response"`
 }
 
 type Part struct {
-	Text         string                 `json:"text,omitempty"`
-	InlineData   *InlineData            `json:"inlineData,omitempty"`
-	FunctionCall *FunctionCall          `json:"functionCall,omitempty"`
-	Thought      *bool                  `json:"thought,omitempty"`
+	Text             string            `json:"text,omitempty"`
+	InlineData       *InlineData       `json:"inlineData,omitempty"`
+	FunctionCall     *FunctionCall     `json:"functionCall,omitempty"`
+	FunctionResp     *FunctionResponse `json:"functionResponse,omitempty"`
+	Thought          *bool             `json:"thought,omitempty"`
+	ThoughtSignature string            `json:"thoughtSignature,omitempty"` // Gemini 3: thought signature for function calls
 }
 
 type ChatContent struct {
@@ -76,4 +85,13 @@ type ChatGenerationConfig struct {
 	CandidateCount   int                    `json:"candidateCount,omitempty"`
 	StopSequences    []string               `json:"stopSequences,omitempty"`
 	ThinkingConfig   map[string]interface{} `json:"thinkingConfig,omitempty"`
+}
+
+type ToolConfig struct {
+	FunctionCallingConfig *FunctionCallingConfig `json:"function_calling_config,omitempty"`
+}
+
+type FunctionCallingConfig struct {
+	Mode                 string   `json:"mode,omitempty"`                   // AUTO / ANY / NONE
+	AllowedFunctionNames []string `json:"allowed_function_names,omitempty"` // optional constraint
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -88,11 +89,17 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 }
 
 func getRequestBody(c *gin.Context, meta *meta.Meta, textRequest *model.GeneralOpenAIRequest, adaptor adaptor.Adaptor) (io.Reader, error) {
-	if !config.EnforceIncludeUsage &&
-		meta.APIType == apitype.OpenAI &&
-		meta.OriginModelName == meta.ActualModelName &&
-		meta.ChannelType != channeltype.Baichuan &&
-		meta.ForcedSystemPrompt == "" {
+	// Check if we need to process the request through ConvertRequest
+	// GeminiOpenAICompatible channels and gemini-* models need special handling for tools/functions
+	needsConversion := config.EnforceIncludeUsage ||
+		meta.APIType != apitype.OpenAI ||
+		meta.OriginModelName != meta.ActualModelName ||
+		meta.ChannelType == channeltype.Baichuan ||
+		meta.ForcedSystemPrompt != "" ||
+		meta.ChannelType == channeltype.GeminiOpenAICompatible ||
+		strings.HasPrefix(textRequest.Model, "gemini-")
+
+	if !needsConversion {
 		// no need to convert request for openai
 		return c.Request.Body, nil
 	}

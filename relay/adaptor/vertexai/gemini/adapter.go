@@ -22,6 +22,14 @@ var ModelList = []string{
 	"gemini-2.0-flash-exp", "gemini-2.0-flash-001",
 	"gemini-2.0-flash-lite-preview-02-05",
 	"gemini-2.0-flash-thinking-exp-01-21",
+	// Gemini 2.5
+	"gemini-2.5-pro",
+	"gemini-2.5-flash",
+	"gemini-2.5-flash-lite",
+	// Gemini 3 (preview)
+	"gemini-3-flash-preview",
+	"gemini-3-pro-preview",
+	"gemini-3-pro-image-preview",
 }
 
 type Adaptor struct {
@@ -32,7 +40,10 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, relayMode int, request *model.G
 		return nil, errors.New("request is nil")
 	}
 
-	geminiRequest := gemini.ConvertRequest(*request)
+	geminiRequest, err := gemini.ConvertRequest(*request)
+	if err != nil {
+		return nil, err
+	}
 	c.Set(ctxkey.RequestModel, request.Model)
 	c.Set(ctxkey.ConvertedRequest, geminiRequest)
 	return geminiRequest, nil

@@ -3,6 +3,7 @@ package gemini
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,8 +35,150 @@ var mimeTypeMap = map[string]string{
 	"text":        "text/plain",
 }
 
+func geminiFinishReason2OpenAI(reason string) string {
+	switch strings.ToUpper(reason) {
+	case "", "FINISH_REASON_UNSPECIFIED", "STOP":
+		return constant.StopFinishReason
+	case "MAX_TOKENS":
+		return "length"
+	default:
+		// SAFETY / RECITATION / OTHER ... keep as-is for transparency
+		return strings.ToLower(reason)
+	}
+}
+
+// geminiUnsupportedSchemaKeys contains JSON Schema fields that Gemini does not support.
+// Gemini only supports a subset of OpenAPI Schema, not full JSON Schema.
+var geminiUnsupportedSchemaKeys = map[string]bool{
+	"additionalProperties":   true,
+	"unevaluatedProperties":  true,
+	"$ref":                   true,
+	"$schema":                true,
+	"$id":                    true,
+	"$defs":                  true,
+	"definitions":            true,
+	"patternProperties":      true,
+	"propertyNames":          true,
+	"unevaluatedItems":       true,
+	"contains":               true,
+	"minContains":            true,
+	"maxContains":            true,
+	"if":                     true,
+	"then":                   true,
+	"else":                   true,
+	"allOf":                  true,
+	"anyOf":                  true,
+	"oneOf":                  true,
+	"not":                    true,
+	"dependentSchemas":       true,
+	"dependentRequired":      true,
+	"const":                  true,
+	"contentEncoding":        true,
+	"contentMediaType":       true,
+	"contentSchema":          true,
+	"deprecated":             true,
+	"readOnly":               true,
+	"writeOnly":              true,
+	"examples":               true,
+	"default":                true,
+	"$comment":               true,
+	"$vocabulary":            true,
+	"$anchor":                true,
+	"$dynamicRef":            true,
+	"$dynamicAnchor":         true,
+	"minLength":              true,
+	"maxLength":              true,
+	"pattern":                true,
+	"minimum":                true,
+	"maximum":                true,
+	"exclusiveMinimum":       true,
+	"exclusiveMaximum":       true,
+	"multipleOf":             true,
+	"minItems":               true,
+	"maxItems":               true,
+	"uniqueItems":            true,
+	"minProperties":          true,
+	"maxProperties":          true,
+}
+
+func sanitizeGeminiFunctionParameters(parameters any) any {
+	// Gemini function_declarations' parameters is NOT full JSON Schema.
+	// A common incompatibility is "additionalProperties" (OpenAI-style JSON Schema).
+	// We recursively drop unsupported keys to avoid Gemini 400 errors.
+	switch v := parameters.(type) {
+	case map[string]any:
+		clean := make(map[string]any, len(v))
+		for k, vv := range v {
+			// drop keys that Gemini rejects
+			if geminiUnsupportedSchemaKeys[k] {
+				continue
+			}
+			clean[k] = sanitizeGeminiFunctionParameters(vv)
+		}
+		return clean
+	case []any:
+		out := make([]any, 0, len(v))
+		for _, item := range v {
+			out = append(out, sanitizeGeminiFunctionParameters(item))
+		}
+		return out
+	default:
+		return parameters
+	}
+}
+
+func convertToolChoiceToToolConfig(toolChoice any) *ToolConfig {
+	if toolChoice == nil {
+		return nil
+	}
+	// OpenAI tool_choice can be:
+	// - "auto" | "none" | "required"
+	// - {"type":"function","function":{"name":"xxx"}}
+	cfg := &FunctionCallingConfig{}
+
+	if tcStr, ok := toolChoice.(string); ok {
+		switch tcStr {
+		case "none":
+			cfg.Mode = "NONE"
+		case "required":
+			cfg.Mode = "ANY"
+		default: // "auto"
+			cfg.Mode = "AUTO"
+		}
+		return &ToolConfig{FunctionCallingConfig: cfg}
+	}
+	if tcMap, ok := toolChoice.(map[string]any); ok {
+		// example: {"type":"function","function":{"name":"get_weather"}}
+		if t, ok := tcMap["type"].(string); ok && t == "function" {
+			if fn, ok := tcMap["function"].(map[string]any); ok {
+				if name, ok := fn["name"].(string); ok && name != "" {
+					cfg.Mode = "ANY"
+					cfg.AllowedFunctionNames = []string{name}
+					return &ToolConfig{FunctionCallingConfig: cfg}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func parseToolResultContentToGeminiResponse(content any) any {
+	// Gemini expects `functionResponse.response` to be an object.
+	// Try to parse JSON string; if not JSON, wrap into {"content": "..."}.
+	switch v := content.(type) {
+	case string:
+		var obj any
+		if err := json.Unmarshal([]byte(v), &obj); err == nil {
+			return obj
+		}
+		return map[string]any{"content": v}
+	default:
+		return map[string]any{"content": fmt.Sprintf("%v", content)}
+	}
+}
+
 // Setting safety to the lowest possible values since Gemini is already powerless enough
-func ConvertRequest(textRequest model.GeneralOpenAIRequest) *ChatRequest {
+func ConvertRequest(textRequest model.GeneralOpenAIRequest) (*ChatRequest, error) {
 	geminiRequest := ChatRequest{
 		Contents: make([]ChatContent, 0, len(textRequest.Messages)),
 		SafetySettings: []ChatSafetySettings{
@@ -66,7 +209,7 @@ func ConvertRequest(textRequest model.GeneralOpenAIRequest) *ChatRequest {
 			MaxOutputTokens: textRequest.MaxTokens,
 		},
 	}
-	
+
 	// Handle extra_body parameters for Gemini-specific features
 	if textRequest.ExtraBody != nil {
 		if googleConfig, ok := textRequest.ExtraBody["google"].(map[string]interface{}); ok {
@@ -87,7 +230,9 @@ func ConvertRequest(textRequest model.GeneralOpenAIRequest) *ChatRequest {
 	if textRequest.Tools != nil {
 		functions := make([]model.Function, 0, len(textRequest.Tools))
 		for _, tool := range textRequest.Tools {
-			functions = append(functions, tool.Function)
+			fn := tool.Function
+			fn.Parameters = sanitizeGeminiFunctionParameters(fn.Parameters)
+			functions = append(functions, fn)
 		}
 		geminiRequest.Tools = []ChatTools{
 			{
@@ -95,14 +240,53 @@ func ConvertRequest(textRequest model.GeneralOpenAIRequest) *ChatRequest {
 			},
 		}
 	} else if textRequest.Functions != nil {
+		// Sanitize legacy functions field as well
+		sanitizedFunctions := sanitizeGeminiFunctionParameters(textRequest.Functions)
 		geminiRequest.Tools = []ChatTools{
 			{
-				FunctionDeclarations: textRequest.Functions,
+				FunctionDeclarations: sanitizedFunctions,
 			},
 		}
 	}
+
+	// tool_choice -> tool_config (best-effort)
+	geminiRequest.ToolConfig = convertToolChoiceToToolConfig(textRequest.ToolChoice)
+
+	// Build a lookup table: tool_call_id -> function name
+	toolCallNameByID := make(map[string]string)
+	for _, m := range textRequest.Messages {
+		for _, tc := range m.ToolCalls {
+			if tc.Id != "" && tc.Function.Name != "" {
+				toolCallNameByID[tc.Id] = tc.Function.Name
+			}
+		}
+	}
+
 	shouldAddDummyModelMessage := false
 	for _, message := range textRequest.Messages {
+		// OpenAI tool result message -> Gemini functionResponse part
+		if message.Role == "tool" {
+			name := toolCallNameByID[message.ToolCallId]
+			if name == "" && message.Name != nil {
+				name = *message.Name
+			}
+			if name == "" {
+				return nil, errors.New("gemini: tool message missing tool_call_id mapping to function name")
+			}
+			geminiRequest.Contents = append(geminiRequest.Contents, ChatContent{
+				Role: "user",
+				Parts: []Part{
+					{
+						FunctionResp: &FunctionResponse{
+							FunctionName: name,
+							Response:     parseToolResultContentToGeminiResponse(message.Content),
+						},
+					},
+				},
+			})
+			continue
+		}
+
 		content := ChatContent{
 			Role: message.Role,
 			Parts: []Part{
@@ -116,6 +300,11 @@ func ConvertRequest(textRequest model.GeneralOpenAIRequest) *ChatRequest {
 		imageNum := 0
 		for _, part := range openaiContent {
 			if part.Type == model.ContentTypeText {
+				// Skip empty text parts to avoid Gemini's "required oneof field 'data' must have one initialized field" error
+				// This happens when assistant message has tool_calls but empty/null content
+				if part.Text == "" {
+					continue
+				}
 				parts = append(parts, Part{
 					Text: part.Text,
 				})
@@ -133,7 +322,50 @@ func ConvertRequest(textRequest model.GeneralOpenAIRequest) *ChatRequest {
 				})
 			}
 		}
+
+		// Preserve OpenAI tool_calls history (assistant -> model.functionCall parts)
+		// Also check for "model" role since some clients may directly use Gemini's role name
+		if (message.Role == "assistant" || message.Role == "model") && len(message.ToolCalls) > 0 {
+			for _, tc := range message.ToolCalls {
+				var args any
+				switch v := tc.Function.Arguments.(type) {
+				case string:
+					_ = json.Unmarshal([]byte(v), &args)
+				default:
+					args = v
+				}
+				funcCall := &FunctionCall{
+					FunctionName: tc.Function.Name,
+					Arguments:    args,
+				}
+				part := Part{
+					FunctionCall: funcCall,
+				}
+				// Gemini 3: pass back thought_signature at Part level only (NOT inside functionCall!)
+				if config.DebugEnabled {
+					tcBytes, _ := json.Marshal(tc)
+					logger.SysLog(fmt.Sprintf("ConvertRequest ToolCall: %s, ExtraContent: %v", string(tcBytes), tc.ExtraContent))
+				}
+				if tc.ExtraContent != nil {
+					if google, ok := tc.ExtraContent["google"].(map[string]interface{}); ok {
+						if sig, ok := google["thought_signature"].(string); ok && sig != "" {
+							part.ThoughtSignature = sig // Only set at Part level!
+							if config.DebugEnabled {
+								logger.SysLog(fmt.Sprintf("ConvertRequest: Found thought_signature: %s", sig[:50]))
+							}
+						}
+					}
+				}
+				parts = append(parts, part)
+			}
+		}
 		content.Parts = parts
+
+		// Skip messages with empty parts to avoid Gemini's "required oneof field 'data' must have one initialized field" error
+		// This can happen when a message has no text content and no tool_calls
+		if len(content.Parts) == 0 {
+			continue
+		}
 
 		// there's no assistant role in gemini and API shall vomit if Role is not user or model
 		if content.Role == "assistant" {
@@ -141,12 +373,12 @@ func ConvertRequest(textRequest model.GeneralOpenAIRequest) *ChatRequest {
 		}
 		// Converting system prompt to prompt from user for the same reason
 		if content.Role == "system" {
-			shouldAddDummyModelMessage = true
 			if IsModelSupportSystemInstruction(textRequest.Model) {
 				geminiRequest.SystemInstruction = &content
 				geminiRequest.SystemInstruction.Role = ""
 				continue
 			} else {
+				shouldAddDummyModelMessage = true
 				content.Role = "user"
 			}
 		}
@@ -167,7 +399,7 @@ func ConvertRequest(textRequest model.GeneralOpenAIRequest) *ChatRequest {
 		}
 	}
 
-	return &geminiRequest
+	return &geminiRequest, nil
 }
 
 func ConvertEmbeddingRequest(request model.GeneralOpenAIRequest) *BatchEmbeddingRequest {
@@ -227,24 +459,40 @@ type ChatPromptFeedback struct {
 func getToolCalls(candidate *ChatCandidate) []model.Tool {
 	var toolCalls []model.Tool
 
-	item := candidate.Content.Parts[0]
-	if item.FunctionCall == nil {
-		return toolCalls
+	for _, item := range candidate.Content.Parts {
+		if item.FunctionCall == nil {
+			continue
+		}
+		argsBytes, err := json.Marshal(item.FunctionCall.Arguments)
+		if err != nil {
+			logger.FatalLog("getToolCalls failed: " + err.Error())
+			continue
+		}
+		tool := model.Tool{
+			Id:   fmt.Sprintf("call_%s", random.GetUUID()),
+			Type: "function",
+			Function: model.Function{
+				Arguments: string(argsBytes),
+				Name:      item.FunctionCall.FunctionName,
+			},
+		}
+		// Gemini 3: preserve thought_signature for tool calls (required when thinking is enabled)
+		// thought_signature is at Part level, not inside FunctionCall
+		thoughtSig := item.ThoughtSignature
+		// Debug: log the thought_signature extraction
+		if config.DebugEnabled {
+			partBytes, _ := json.Marshal(item)
+			logger.SysLog(fmt.Sprintf("Gemini getToolCalls Part: %s, ThoughtSig: %s", string(partBytes), thoughtSig))
+		}
+		if thoughtSig != "" {
+			tool.ExtraContent = map[string]interface{}{
+				"google": map[string]interface{}{
+					"thought_signature": thoughtSig,
+				},
+			}
+		}
+		toolCalls = append(toolCalls, tool)
 	}
-	argsBytes, err := json.Marshal(item.FunctionCall.Arguments)
-	if err != nil {
-		logger.FatalLog("getToolCalls failed: " + err.Error())
-		return toolCalls
-	}
-	toolCall := model.Tool{
-		Id:   fmt.Sprintf("call_%s", random.GetUUID()),
-		Type: "function",
-		Function: model.Function{
-			Arguments: string(argsBytes),
-			Name:      item.FunctionCall.FunctionName,
-		},
-	}
-	toolCalls = append(toolCalls, toolCall)
 	return toolCalls
 }
 
@@ -264,8 +512,9 @@ func responseGeminiChat2OpenAI(response *ChatResponse) *openai.TextResponse {
 			FinishReason: constant.StopFinishReason,
 		}
 		if len(candidate.Content.Parts) > 0 {
-			if candidate.Content.Parts[0].FunctionCall != nil {
+			if len(getToolCalls(&candidate)) > 0 {
 				choice.Message.ToolCalls = getToolCalls(&candidate)
+				choice.FinishReason = "tool_calls"
 			} else {
 				var builder strings.Builder
 				isInThought := false
@@ -273,32 +522,32 @@ func responseGeminiChat2OpenAI(response *ChatResponse) *openai.TextResponse {
 					if partIdx > 0 {
 						builder.WriteString("\n")
 					}
-					
+
 					// Add <thought> tag at the beginning of thought content
 					if part.Thought != nil && *part.Thought && !isInThought {
 						builder.WriteString("<thought>")
 						isInThought = true
 					}
-					
+
 					// Add </thought> tag when transitioning from thought to non-thought
 					if (part.Thought == nil || !*part.Thought) && isInThought {
 						builder.WriteString("</thought>")
 						isInThought = false
 					}
-					
+
 					builder.WriteString(part.Text)
 				}
-				
+
 				// Close thought tag if still open at the end
 				if isInThought {
 					builder.WriteString("</thought>")
 				}
-				
+
 				choice.Message.Content = builder.String()
 			}
 		} else {
 			choice.Message.Content = ""
-			choice.FinishReason = candidate.FinishReason
+			choice.FinishReason = geminiFinishReason2OpenAI(candidate.FinishReason)
 		}
 		fullTextResponse.Choices = append(fullTextResponse.Choices, choice)
 	}
@@ -309,10 +558,28 @@ func streamResponseGeminiChat2OpenAI(geminiResponse *ChatResponse, modelName str
 	var choice openai.ChatCompletionsStreamResponseChoice
 	content := geminiResponse.GetResponseText()
 	choice.Delta.Role = "assistant"
-	
+
 	// Check if this is thought content
 	if len(geminiResponse.Candidates) > 0 && len(geminiResponse.Candidates[0].Content.Parts) > 0 {
-		part := geminiResponse.Candidates[0].Content.Parts[0]
+		parts := geminiResponse.Candidates[0].Content.Parts
+
+		// Tool call chunk
+		candidate := geminiResponse.Candidates[0]
+		if len(getToolCalls(&candidate)) > 0 {
+			choice.Delta.Content = nil
+			choice.Delta.ToolCalls = getToolCalls(&candidate)
+			finish := "tool_calls"
+			choice.FinishReason = &finish
+			var response openai.ChatCompletionsStreamResponse
+			response.Id = fmt.Sprintf("chatcmpl-%s", random.GetUUID())
+			response.Created = helper.GetTimestamp()
+			response.Object = "chat.completion.chunk"
+			response.Model = modelName
+			response.Choices = []openai.ChatCompletionsStreamResponseChoice{choice}
+			return &response
+		}
+
+		part := parts[0]
 		if part.Thought != nil && *part.Thought {
 			// This is thought content - add <thought> tag on first chunk
 			if !*isInThought {
@@ -331,9 +598,9 @@ func streamResponseGeminiChat2OpenAI(geminiResponse *ChatResponse, modelName str
 			*isInThought = false
 		}
 	}
-	
+
 	choice.Delta.Content = content
-	
+
 	//choice.FinishReason = &constant.StopFinishReason
 	var response openai.ChatCompletionsStreamResponse
 	response.Id = fmt.Sprintf("chatcmpl-%s", random.GetUUID())
@@ -367,7 +634,7 @@ func StreamHandler(c *gin.Context, resp *http.Response, modelName string) (*mode
 	scanner.Split(bufio.ScanLines)
 
 	common.SetEventStreamHeaders(c)
-	
+
 	// Track thought state across chunks
 	isFirstThoughtChunk := false
 	isInThought := false
@@ -387,7 +654,7 @@ func StreamHandler(c *gin.Context, resp *http.Response, modelName string) (*mode
 			logger.SysError("error unmarshalling stream response: " + err.Error())
 			continue
 		}
-		
+
 		// Debug: log raw response to see Gemini's format
 		if config.DebugEnabled {
 			logger.SysLog("Gemini raw response: " + data)

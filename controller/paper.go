@@ -23,6 +23,7 @@ var (
 	requestLock     sync.Mutex
 	lastRequestTime time.Time
 	minInterval     = 1100 * time.Millisecond // Slightly more than 1s to be safe
+	processingQueue = make(chan struct{}, 30)
 )
 
 // rateLimitCall executes the function with rate limiting
@@ -43,6 +44,20 @@ func rateLimitCall(f func() (interface{}, error)) (interface{}, error) {
 
 // PaperSemanticSearch handles semantic search requests
 func PaperSemanticSearch(c *gin.Context) {
+	// Check queue
+	select {
+	case processingQueue <- struct{}{}:
+		defer func() { <-processingQueue }()
+	default:
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":  "当前使用量过大，请稍后重试",
+			"total":  0,
+			"cursor": 0,
+			"data":   []interface{}{},
+		})
+		return
+	}
+
 	var req model.PaperSearchRequest
 	if err := c.ShouldBind(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -99,6 +114,22 @@ func PaperSemanticSearch(c *gin.Context) {
 
 // PaperBooleanSearch handles boolean search requests with year filtering
 func PaperBooleanSearch(c *gin.Context) {
+	// Check queue
+	select {
+	case processingQueue <- struct{}{}:
+		defer func() { <-processingQueue }()
+	default:
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":  "当前使用量过大，请稍后重试",
+			"total":  0,
+			"cursor": 0,
+			"sort":   "paperId:asc",
+			"year":   nil,
+			"data":   []interface{}{},
+		})
+		return
+	}
+
 	var req model.PaperSearchRequest
 	if err := c.ShouldBind(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -114,7 +145,7 @@ func PaperBooleanSearch(c *gin.Context) {
 
 	// Default sort if not provided
 	if req.Sort == "" {
-		req.Sort = "paperId:asc" // Default from Python code
+		req.Sort = "paperId:asc"
 	}
 
 	// Safety check for limit
@@ -124,49 +155,101 @@ func PaperBooleanSearch(c *gin.Context) {
 		req.Limit = 10
 	}
 
-	result, err := rateLimitCall(func() (interface{}, error) {
-		// Construct URL parameters using url.Values
-		params := url.Values{}
-		params.Add("query", req.Query)
-		params.Add("offset", fmt.Sprintf("%d", req.Cursor))
-		params.Add("limit", fmt.Sprintf("%d", req.Limit))
-		params.Add("fields", "paperId,title,abstract,authors,publicationDate,citationCount,year,url")
+	// We need to fetch items to satisfy [req.Cursor, req.Cursor+req.Limit]
+	// Since we use Bulk API, we must iterate from the beginning.
 
-		if req.Sort != "" {
+	var accumulatedPapers []model.Paper
+	var total int
+	var nextToken string
+
+	neededCount := req.Cursor + req.Limit
+
+	// Loop to fetch pages until we have enough data
+	for {
+		// Stop if we have enough papers
+		if len(accumulatedPapers) >= neededCount {
+			break
+		}
+
+		result, err := rateLimitCall(func() (interface{}, error) {
+			params := url.Values{}
+			params.Add("query", req.Query)
+			params.Add("fields", "paperId,title,abstract,authors,publicationDate,citationCount,year,url")
 			params.Add("sort", req.Sort)
-		}
 
-		if req.Year != "" {
-			params.Add("year", req.Year)
-		}
+			if req.Year != "" {
+				params.Add("year", req.Year)
+			}
 
-		finalURL := fmt.Sprintf("%s/paper/search?%s", BaseURL, params.Encode())
+			if nextToken != "" {
+				params.Add("token", nextToken)
+			}
 
-		return doPaperRequest(finalURL)
-	})
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":  err.Error(),
-			"total":  0,
-			"cursor": 0,
-			"sort":   "paperId:asc",
-			"year":   nil,
-			"data":   []interface{}{},
+			// Use Bulk Search Endpoint
+			// Note: Bulk search does not support 'limit' or 'offset' parameters directly like standard search
+			finalURL := fmt.Sprintf("%s/paper/search/bulk?%s", BaseURL, params.Encode())
+			return doPaperRequest(finalURL)
 		})
-		return
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":  err.Error(),
+				"total":  total,
+				"cursor": req.Cursor,
+				"sort":   req.Sort,
+				"year":   req.Year,
+				"data":   []interface{}{},
+			})
+			return
+		}
+
+		resp := result.(*model.SemanticScholarResponse)
+
+		// Update total (Bulk API returns total matches)
+		if resp.Total > 0 {
+			total = resp.Total
+		}
+
+		// Append papers
+		if len(resp.Data) > 0 {
+			accumulatedPapers = append(accumulatedPapers, resp.Data...)
+		}
+
+		// Check for next token
+		if resp.Token != nil && *resp.Token != "" {
+			nextToken = *resp.Token
+		} else if resp.NextToken != nil && *resp.NextToken != "" {
+			nextToken = *resp.NextToken
+		} else {
+			// No more pages
+			break
+		}
 	}
 
-	resp := result.(*model.SemanticScholarResponse)
-	if resp.Total > 0 && len(resp.Data) > 0 {
-		resp.Cursor = req.Cursor + len(resp.Data)
+	// Slice the results to match requested cursor and limit
+	var resultData []model.Paper
+	var nextCursor int
+
+	if req.Cursor < len(accumulatedPapers) {
+		end := req.Cursor + req.Limit
+		if end > len(accumulatedPapers) {
+			end = len(accumulatedPapers)
+		}
+		resultData = accumulatedPapers[req.Cursor:end]
 	} else {
-		resp.Cursor = req.Cursor
+		resultData = []model.Paper{}
 	}
-	resp.Sort = req.Sort
-	resp.Year = req.Year
 
-	c.JSON(http.StatusOK, resp)
+	nextCursor = req.Cursor + len(resultData)
+
+	c.JSON(http.StatusOK, gin.H{
+		"error":  nil,
+		"total":  total,
+		"cursor": nextCursor,
+		"sort":   req.Sort,
+		"year":   req.Year,
+		"data":   resultData,
+	})
 }
 
 func doPaperRequest(url string) (*model.SemanticScholarResponse, error) {

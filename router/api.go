@@ -124,5 +124,31 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			groupRoute.GET("/", controller.GetGroups)
 		}
+
+		// 遥测数据接口（公开，用于接收前端上报的数据）
+		// 使用 OPTIONS 和 POST 分别处理，确保 CORS 预检请求正确响应
+		apiRouter.OPTIONS("/telemetry", func(c *gin.Context) {
+			c.Header("Access-Control-Allow-Origin", c.GetHeader("Origin"))
+			c.Header("Access-Control-Allow-Methods", "POST, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			c.Header("Access-Control-Allow-Credentials", "true")
+			c.Header("Access-Control-Max-Age", "86400")
+			c.Status(204)
+		})
+		apiRouter.POST("/telemetry", controller.ReceiveTelemetry)
+
+		// 遥测统计接口（管理员）
+		telemetryRoute := apiRouter.Group("/telemetry")
+		telemetryRoute.Use(middleware.AdminAuth())
+		{
+			telemetryRoute.GET("/events", controller.GetTelemetryEvents)
+			telemetryRoute.GET("/stats/overview", controller.GetTelemetryOverview)
+			telemetryRoute.GET("/stats/chat", controller.GetTelemetryChatStats)
+			telemetryRoute.GET("/stats/tools", controller.GetTelemetryToolStats)
+			telemetryRoute.GET("/stats/dau", controller.GetTelemetryDAUStats)
+			telemetryRoute.GET("/stats/text-actions", controller.GetTelemetryTextActionStats)
+			telemetryRoute.GET("/stats/tool-approvals", controller.GetTelemetryToolApprovalStats)
+			telemetryRoute.GET("/stats/all", controller.GetTelemetryAllStats)
+		}
 	}
 }

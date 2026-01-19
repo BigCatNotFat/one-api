@@ -8,11 +8,12 @@ import {
   IconKey,
   IconGardenCart,
   IconUser,
-  IconUserScan
+  IconUserScan,
+  IconChartBar
 } from '@tabler/icons-react';
 
 // constant
-const icons = { IconDashboard, IconSitemap, IconArticle, IconCoin, IconAdjustments, IconKey, IconGardenCart, IconUser, IconUserScan };
+const icons = { IconDashboard, IconSitemap, IconArticle, IconCoin, IconAdjustments, IconKey, IconGardenCart, IconUser, IconUserScan, IconChartBar };
 
 // ==============================|| DASHBOARD MENU ITEMS ||============================== //
 
@@ -53,6 +54,15 @@ const panel = {
       url: '/panel/log',
       icon: icons.IconArticle,
       breadcrumbs: false
+    },
+    {
+      id: 'telemetry',
+      title: '遥测统计',
+      type: 'item',
+      url: '/panel/telemetry',
+      icon: icons.IconChartBar,
+      breadcrumbs: false,
+      isAdmin: true
     },
     {
       id: 'redemption',

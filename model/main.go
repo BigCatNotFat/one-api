@@ -160,6 +160,10 @@ func migrateDB() error {
 	if err = DB.AutoMigrate(&Channel{}); err != nil {
 		return err
 	}
+	// 遥测相关表
+	if err = MigrateTelemetryTables(DB); err != nil {
+		return err
+	}
 	return nil
 }
 

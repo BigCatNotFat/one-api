@@ -62,6 +62,12 @@ let headerButtons = [
     icon: 'book',
   },
   {
+    name: 'header.telemetry',
+    to: '/telemetry',
+    icon: 'chart line',
+    admin: true,
+  },
+  {
     name: 'header.setting',
     to: '/setting',
     icon: 'setting',

@@ -1,6 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
-  Card,
   Grid,
   Header,
   Segment,
@@ -10,7 +9,18 @@ import {
   Dimmer,
   Label,
   Dropdown,
+  Button,
 } from 'semantic-ui-react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts';
 import { API, showError, isAdmin } from '../../helpers';
 
 const Telemetry = () => {
@@ -22,6 +32,10 @@ const Telemetry = () => {
   const [textActionStats, setTextActionStats] = useState([]);
   const [toolApprovalStats, setToolApprovalStats] = useState([]);
   const [dauDays, setDauDays] = useState(30);
+  const [timelineStats, setTimelineStats] = useState([]);
+  const [timelineHours, setTimelineHours] = useState(24);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [lastTimelineUpdate, setLastTimelineUpdate] = useState(null);
 
   const loadAllStats = async () => {
     if (!isAdmin()) {
@@ -50,15 +64,69 @@ const Telemetry = () => {
     setLoading(false);
   };
 
+  const loadTimelineStats = useCallback(async () => {
+    if (!isAdmin()) return;
+    setTimelineLoading(true);
+    try {
+      const res = await API.get('/api/telemetry/stats/timeline', {
+        params: { hours: timelineHours }
+      });
+      const { success, message, data } = res.data;
+      if (success) {
+        setTimelineStats(data || []);
+        setLastTimelineUpdate(new Date());
+      } else {
+        showError(message);
+      }
+    } catch (error) {
+      showError(error.message);
+    }
+    setTimelineLoading(false);
+  }, [timelineHours]);
+
   useEffect(() => {
     loadAllStats();
   }, [dauDays]);
+
+  useEffect(() => {
+    loadTimelineStats();
+    // 每30分钟自动刷新时间轴数据
+    const interval = setInterval(loadTimelineStats, 30 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [loadTimelineStats]);
 
   const dayOptions = [
     { key: 7, text: '7 天', value: 7 },
     { key: 30, text: '30 天', value: 30 },
     { key: 90, text: '90 天', value: 90 },
   ];
+
+  const hoursOptions = [
+    { key: 6, text: '6 小时', value: 6 },
+    { key: 12, text: '12 小时', value: 12 },
+    { key: 24, text: '24 小时', value: 24 },
+    { key: 48, text: '48 小时', value: 48 },
+    { key: 168, text: '7 天', value: 168 },
+  ];
+
+  // 计算时间轴统计摘要
+  const timelineSummary = {
+    totalUsers: timelineStats.reduce((sum, d) => sum + (d.active_users || 0), 0),
+    totalEvents: timelineStats.reduce((sum, d) => sum + (d.event_count || 0), 0),
+    totalChats: timelineStats.reduce((sum, d) => sum + (d.chat_count || 0), 0),
+    totalTools: timelineStats.reduce((sum, d) => sum + (d.tool_success_count || 0) + (d.tool_failed_count || 0), 0),
+  };
+
+  // 处理时间轴数据用于图表
+  const chartData = timelineStats.map(d => ({
+    time: d.time_slot.split(' ')[1] || d.time_slot,
+    fullTime: d.time_slot,
+    activeUsers: d.active_users || 0,
+    eventCount: d.event_count || 0,
+    chatCount: d.chat_count || 0,
+    toolSuccess: d.tool_success_count || 0,
+    toolFailed: d.tool_failed_count || 0,
+  }));
 
   if (!isAdmin()) {
     return (
@@ -110,6 +178,135 @@ const Telemetry = () => {
                 <Statistic.Label>总事件数</Statistic.Label>
               </Statistic>
             </Statistic.Group>
+          </Segment>
+
+          {/* 实时时间轴统计 */}
+          <Segment loading={timelineLoading}>
+            <Header as="h4">
+              <i className="clock icon"></i>
+              实时数据监控（每30分钟更新）
+              <Dropdown
+                selection
+                compact
+                options={hoursOptions}
+                value={timelineHours}
+                onChange={(e, { value }) => setTimelineHours(value)}
+                style={{ marginLeft: 20 }}
+              />
+              <Button
+                icon="refresh"
+                size="tiny"
+                onClick={loadTimelineStats}
+                loading={timelineLoading}
+                style={{ marginLeft: 10 }}
+              />
+              {lastTimelineUpdate && (
+                <span style={{ fontSize: '12px', color: '#999', marginLeft: 10 }}>
+                  上次更新: {lastTimelineUpdate.toLocaleTimeString()}
+                </span>
+              )}
+            </Header>
+
+            {/* 时间段快速统计摘要 */}
+            <Statistic.Group widths="four" size="tiny" style={{ marginBottom: 20 }}>
+              <Statistic>
+                <Statistic.Value>{timelineSummary.totalUsers}</Statistic.Value>
+                <Statistic.Label>用户活跃(累计)</Statistic.Label>
+              </Statistic>
+              <Statistic color="blue">
+                <Statistic.Value>{timelineSummary.totalEvents}</Statistic.Value>
+                <Statistic.Label>事件数(累计)</Statistic.Label>
+              </Statistic>
+              <Statistic color="green">
+                <Statistic.Value>{timelineSummary.totalChats}</Statistic.Value>
+                <Statistic.Label>聊天次数(累计)</Statistic.Label>
+              </Statistic>
+              <Statistic color="teal">
+                <Statistic.Value>{timelineSummary.totalTools}</Statistic.Value>
+                <Statistic.Label>工具调用(累计)</Statistic.Label>
+              </Statistic>
+            </Statistic.Group>
+
+            {chartData.length > 0 ? (
+              <div style={{ width: '100%', height: 350 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={chartData}
+                    margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                    <XAxis
+                      dataKey="time"
+                      tick={{ fontSize: 10 }}
+                      interval={Math.floor(chartData.length / 8)}
+                    />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip
+                      labelFormatter={(label, payload) => {
+                        if (payload && payload.length > 0) {
+                          return payload[0].payload.fullTime;
+                        }
+                        return label;
+                      }}
+                      contentStyle={{
+                        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                        border: '1px solid #ddd',
+                        borderRadius: 4,
+                      }}
+                    />
+                    <Legend />
+                    <Line
+                      type="monotone"
+                      dataKey="activeUsers"
+                      name="活跃用户"
+                      stroke="#2185d0"
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 4 }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="eventCount"
+                      name="事件数"
+                      stroke="#21ba45"
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 4 }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="chatCount"
+                      name="聊天次数"
+                      stroke="#f2711c"
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 4 }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="toolSuccess"
+                      name="工具成功"
+                      stroke="#00b5ad"
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 4 }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="toolFailed"
+                      name="工具失败"
+                      stroke="#db2828"
+                      strokeWidth={2}
+                      strokeDasharray="5 5"
+                      dot={false}
+                      activeDot={{ r: 4 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <p style={{ color: '#999', textAlign: 'center', padding: '40px 0' }}>暂无时间轴数据</p>
+            )}
           </Segment>
 
           {/* DAU 统计 */}

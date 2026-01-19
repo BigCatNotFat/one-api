@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   Grid,
   Typography,
@@ -16,7 +16,8 @@ import {
   Chip,
   Stack,
   ToggleButton,
-  ToggleButtonGroup
+  ToggleButtonGroup,
+  Tooltip
 } from '@mui/material';
 import { useTheme, styled } from '@mui/material/styles';
 import Chart from 'react-apexcharts';
@@ -31,7 +32,9 @@ import {
   IconActivity,
   IconTool,
   IconFileText,
-  IconGitBranch
+  IconGitBranch,
+  IconTimeline,
+  IconRefresh
 } from '@tabler/icons-react';
 
 // 统计卡片样式
@@ -73,6 +76,10 @@ const Telemetry = () => {
   const [textActionStats, setTextActionStats] = useState([]);
   const [toolApprovalStats, setToolApprovalStats] = useState([]);
   const [dauDays, setDauDays] = useState('30');
+  const [timelineStats, setTimelineStats] = useState([]);
+  const [timelineHours, setTimelineHours] = useState('24');
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [lastTimelineUpdate, setLastTimelineUpdate] = useState(null);
 
   const loadAllStats = async () => {
     setLoading(true);
@@ -97,9 +104,35 @@ const Telemetry = () => {
     setLoading(false);
   };
 
+  const loadTimelineStats = useCallback(async () => {
+    setTimelineLoading(true);
+    try {
+      const res = await API.get('/api/telemetry/stats/timeline', {
+        params: { hours: parseInt(timelineHours) }
+      });
+      const { success, message, data } = res.data;
+      if (success) {
+        setTimelineStats(data || []);
+        setLastTimelineUpdate(new Date());
+      } else {
+        showError(message);
+      }
+    } catch (error) {
+      showError(error.message);
+    }
+    setTimelineLoading(false);
+  }, [timelineHours]);
+
   useEffect(() => {
     loadAllStats();
   }, [dauDays]);
+
+  useEffect(() => {
+    loadTimelineStats();
+    // 每30分钟自动刷新时间轴数据
+    const interval = setInterval(loadTimelineStats, 30 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [loadTimelineStats]);
 
   // DAU 图表配置
   const dauChartOptions = {
@@ -194,6 +227,109 @@ const Telemetry = () => {
     { name: '失败', data: toolStats.map(t => parseInt(t.failed_count)) }
   ];
 
+  // 时间轴图表配置 - 多指标堆叠区域图
+  const timelineChartOptions = {
+    chart: {
+      type: 'area',
+      stacked: false,
+      toolbar: { show: true },
+      zoom: { enabled: true },
+      animations: { enabled: true }
+    },
+    dataLabels: { enabled: false },
+    stroke: { curve: 'smooth', width: 2 },
+    fill: {
+      type: 'gradient',
+      gradient: {
+        shadeIntensity: 1,
+        opacityFrom: 0.4,
+        opacityTo: 0.1
+      }
+    },
+    xaxis: {
+      categories: timelineStats.map(d => {
+        const time = d.time_slot.split(' ')[1] || d.time_slot;
+        return time;
+      }),
+      labels: {
+        rotate: -45,
+        style: { fontSize: '10px' },
+        // 只显示部分标签避免拥挤
+        formatter: (value, timestamp, opts) => {
+          if (opts && opts.i !== undefined) {
+            // 每隔几个显示一个标签
+            const interval = timelineStats.length > 48 ? 6 : timelineStats.length > 24 ? 4 : 2;
+            return opts.i % interval === 0 ? value : '';
+          }
+          return value;
+        }
+      },
+      tickAmount: timelineStats.length > 48 ? 12 : 8
+    },
+    yaxis: [
+      {
+        title: { text: '用户/事件数', style: { fontSize: '12px' } },
+        labels: { formatter: (val) => Math.round(val) }
+      },
+      {
+        opposite: true,
+        title: { text: '工具调用数', style: { fontSize: '12px' } },
+        labels: { formatter: (val) => Math.round(val) }
+      }
+    ],
+    tooltip: {
+      x: {
+        formatter: (val, opts) => {
+          if (opts && opts.dataPointIndex !== undefined && timelineStats[opts.dataPointIndex]) {
+            return timelineStats[opts.dataPointIndex].time_slot;
+          }
+          return val;
+        }
+      },
+      shared: true,
+      intersect: false
+    },
+    legend: {
+      position: 'top',
+      horizontalAlign: 'center'
+    },
+    colors: [
+      theme.palette.primary.main,
+      theme.palette.success.main,
+      theme.palette.warning.main,
+      theme.palette.info.main,
+      theme.palette.error.main
+    ]
+  };
+
+  const timelineChartSeries = [
+    {
+      name: '活跃用户',
+      type: 'area',
+      data: timelineStats.map(d => d.active_users || 0)
+    },
+    {
+      name: '事件数',
+      type: 'area',
+      data: timelineStats.map(d => d.event_count || 0)
+    },
+    {
+      name: '聊天次数',
+      type: 'area',
+      data: timelineStats.map(d => d.chat_count || 0)
+    },
+    {
+      name: '工具成功',
+      type: 'line',
+      data: timelineStats.map(d => d.tool_success_count || 0)
+    },
+    {
+      name: '工具失败',
+      type: 'line',
+      data: timelineStats.map(d => d.tool_failed_count || 0)
+    }
+  ];
+
   return (
     <>
       <Stack direction="row" alignItems="center" justifyContent="space-between" mb={2.5}>
@@ -275,6 +411,82 @@ const Telemetry = () => {
               </StatsCard>
             </Grid>
           </Grid>
+        </Grid>
+
+        {/* 实时时间轴统计 */}
+        <Grid item xs={12}>
+          <MainCard>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography variant="h4">
+                  <IconTimeline size={20} style={{ marginRight: 8, verticalAlign: 'middle' }} />
+                  实时数据监控（每30分钟更新）
+                </Typography>
+                {timelineLoading && <LinearProgress sx={{ width: 100, ml: 2 }} />}
+              </Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                {lastTimelineUpdate && (
+                  <Typography variant="caption" color="textSecondary">
+                    上次更新: {lastTimelineUpdate.toLocaleTimeString()}
+                  </Typography>
+                )}
+                <Tooltip title="手动刷新">
+                  <Chip
+                    icon={<IconRefresh size={16} />}
+                    label="刷新"
+                    size="small"
+                    clickable
+                    onClick={loadTimelineStats}
+                    disabled={timelineLoading}
+                  />
+                </Tooltip>
+                <ToggleButtonGroup
+                  value={timelineHours}
+                  exclusive
+                  onChange={(e, newValue) => newValue && setTimelineHours(newValue)}
+                  size="small"
+                >
+                  <ToggleButton value="6">6小时</ToggleButton>
+                  <ToggleButton value="12">12小时</ToggleButton>
+                  <ToggleButton value="24">24小时</ToggleButton>
+                  <ToggleButton value="48">48小时</ToggleButton>
+                  <ToggleButton value="168">7天</ToggleButton>
+                </ToggleButtonGroup>
+              </Box>
+            </Box>
+            {timelineStats.length > 0 ? (
+              <>
+                <Chart options={timelineChartOptions} series={timelineChartSeries} type="area" height={350} />
+                {/* 时间轴快速统计摘要 */}
+                <Box sx={{ mt: 2, display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'center' }}>
+                  <Chip
+                    label={`总活跃用户: ${timelineStats.reduce((sum, d) => sum + (d.active_users || 0), 0)}`}
+                    color="primary"
+                    variant="outlined"
+                  />
+                  <Chip
+                    label={`总事件数: ${timelineStats.reduce((sum, d) => sum + (d.event_count || 0), 0)}`}
+                    color="success"
+                    variant="outlined"
+                  />
+                  <Chip
+                    label={`总聊天次数: ${timelineStats.reduce((sum, d) => sum + (d.chat_count || 0), 0)}`}
+                    color="warning"
+                    variant="outlined"
+                  />
+                  <Chip
+                    label={`工具调用: ${timelineStats.reduce((sum, d) => sum + (d.tool_success_count || 0) + (d.tool_failed_count || 0), 0)}`}
+                    color="info"
+                    variant="outlined"
+                  />
+                </Box>
+              </>
+            ) : (
+              <Box sx={{ height: 350, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Typography color="textSecondary">暂无时间轴数据</Typography>
+              </Box>
+            )}
+          </MainCard>
         </Grid>
 
         {/* DAU 趋势图 */}

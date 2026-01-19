@@ -149,6 +149,7 @@ func SetApiRouter(router *gin.Engine) {
 			telemetryRoute.GET("/stats/text-actions", controller.GetTelemetryTextActionStats)
 			telemetryRoute.GET("/stats/tool-approvals", controller.GetTelemetryToolApprovalStats)
 			telemetryRoute.GET("/stats/all", controller.GetTelemetryAllStats)
+			telemetryRoute.GET("/stats/timeline", controller.GetTelemetryTimelineStats)
 		}
 	}
 }

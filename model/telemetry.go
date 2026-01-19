@@ -349,6 +349,144 @@ func GetTelemetryToolApprovalStats(startTimestamp, endTimestamp int64) ([]*Telem
 	return stats, err
 }
 
+// TelemetryTimelineStat 时间轴统计结构（每半小时一个数据点）
+type TelemetryTimelineStat struct {
+	TimeSlot       string `json:"time_slot"`       // 时间段标识 (格式: "2024-01-15 14:00" 或 "2024-01-15 14:30")
+	Timestamp      int64  `json:"timestamp"`       // 时间段起始时间戳（毫秒）
+	ActiveUsers    int64  `json:"active_users"`    // 活跃用户数
+	EventCount     int64  `json:"event_count"`     // 事件数量
+	SessionCount   int64  `json:"session_count"`   // 会话数量
+	ChatCount      int64  `json:"chat_count"`      // 聊天次数
+	ToolSuccessCount int64 `json:"tool_success_count"` // 工具成功次数
+	ToolFailedCount  int64 `json:"tool_failed_count"`  // 工具失败次数
+}
+
+// GetTelemetryTimelineStats 获取时间轴统计（按半小时分组，最近24小时）
+func GetTelemetryTimelineStats(hours int) ([]*TelemetryTimelineStat, error) {
+	if hours <= 0 {
+		hours = 24 // 默认24小时
+	}
+	if hours > 168 {
+		hours = 168 // 最多7天
+	}
+
+	// 计算时间范围
+	now := time.Now()
+	// 对齐到下一个半小时边界（这样才能包含当前时间段的数据）
+	minutes := now.Minute()
+	if minutes >= 30 {
+		// 当前在 xx:30-xx:59，对齐到下一个整点
+		now = now.Truncate(time.Hour).Add(time.Hour)
+	} else {
+		// 当前在 xx:00-xx:29，对齐到 xx:30
+		now = now.Truncate(time.Hour).Add(30 * time.Minute)
+	}
+	endTime := now.UnixMilli()
+	startTime := now.Add(time.Duration(-hours) * time.Hour).UnixMilli()
+
+	// 生成所有时间段
+	timeSlots := make(map[int64]*TelemetryTimelineStat)
+	slotOrder := make([]int64, 0)
+	for ts := startTime; ts < endTime; ts += 30 * 60 * 1000 { // 每30分钟
+		t := time.UnixMilli(ts)
+		timeSlots[ts] = &TelemetryTimelineStat{
+			TimeSlot:  t.Format("2006-01-02 15:04"),
+			Timestamp: ts,
+		}
+		slotOrder = append(slotOrder, ts)
+	}
+
+	// 根据数据库类型选择时间槽计算方式
+	// 使用 client_timestamp（客户端上报时间）来统计，这样更能反映用户实际活动时间
+	var timeSlotExpr string
+	if common.UsingPostgreSQL {
+		// PostgreSQL: 将时间戳对齐到30分钟
+		timeSlotExpr = "FLOOR(client_timestamp / 1800000) * 1800000"
+	} else if common.UsingSQLite {
+		// SQLite
+		timeSlotExpr = "(client_timestamp / 1800000) * 1800000"
+	} else {
+		// MySQL
+		timeSlotExpr = "FLOOR(client_timestamp / 1800000) * 1800000"
+	}
+
+	// 查询事件统计
+	type EventStat struct {
+		TimeSlot     int64 `gorm:"column:time_slot"`
+		ActiveUsers  int64 `gorm:"column:active_users"`
+		EventCount   int64 `gorm:"column:event_count"`
+		SessionCount int64 `gorm:"column:session_count"`
+	}
+	var eventStats []EventStat
+	err := DB.Model(&TelemetryEvent{}).
+		Select(timeSlotExpr+" as time_slot, COUNT(DISTINCT user_id) as active_users, COUNT(*) as event_count, COUNT(DISTINCT session_id) as session_count").
+		Where("client_timestamp >= ? AND client_timestamp < ?", startTime, endTime).
+		Group("time_slot").
+		Find(&eventStats).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// 合并事件统计
+	for _, stat := range eventStats {
+		if slot, ok := timeSlots[stat.TimeSlot]; ok {
+			slot.ActiveUsers = stat.ActiveUsers
+			slot.EventCount = stat.EventCount
+			slot.SessionCount = stat.SessionCount
+		}
+	}
+
+	// 查询聊天统计
+	type ChatStat struct {
+		TimeSlot  int64 `gorm:"column:time_slot"`
+		ChatCount int64 `gorm:"column:chat_count"`
+	}
+	var chatStats []ChatStat
+	err = DB.Model(&TelemetryChat{}).
+		Select(timeSlotExpr+" as time_slot, SUM(count) as chat_count").
+		Joins("JOIN telemetry_events ON telemetry_chats.event_id = telemetry_events.id").
+		Where("telemetry_events.client_timestamp >= ? AND telemetry_events.client_timestamp < ?", startTime, endTime).
+		Group("time_slot").
+		Find(&chatStats).Error
+	if err == nil {
+		for _, stat := range chatStats {
+			if slot, ok := timeSlots[stat.TimeSlot]; ok {
+				slot.ChatCount = stat.ChatCount
+			}
+		}
+	}
+
+	// 查询工具统计
+	type ToolStat struct {
+		TimeSlot     int64 `gorm:"column:time_slot"`
+		SuccessCount int64 `gorm:"column:success_count"`
+		FailedCount  int64 `gorm:"column:failed_count"`
+	}
+	var toolStats []ToolStat
+	err = DB.Model(&TelemetryTool{}).
+		Select(timeSlotExpr+" as time_slot, SUM(success_count) as success_count, SUM(failed_count) as failed_count").
+		Joins("JOIN telemetry_events ON telemetry_tools.event_id = telemetry_events.id").
+		Where("telemetry_events.client_timestamp >= ? AND telemetry_events.client_timestamp < ?", startTime, endTime).
+		Group("time_slot").
+		Find(&toolStats).Error
+	if err == nil {
+		for _, stat := range toolStats {
+			if slot, ok := timeSlots[stat.TimeSlot]; ok {
+				slot.ToolSuccessCount = stat.SuccessCount
+				slot.ToolFailedCount = stat.FailedCount
+			}
+		}
+	}
+
+	// 按时间顺序返回结果
+	result := make([]*TelemetryTimelineStat, 0, len(slotOrder))
+	for _, ts := range slotOrder {
+		result = append(result, timeSlots[ts])
+	}
+
+	return result, nil
+}
+
 // MigrateTelemetryTables 迁移遥测相关表
 func MigrateTelemetryTables(db *gorm.DB) error {
 	return db.AutoMigrate(

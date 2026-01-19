@@ -410,3 +410,27 @@ func GetTelemetryAllStats(c *gin.Context) {
 	})
 }
 
+// GetTelemetryTimelineStats 获取时间轴统计（按半小时分组）
+// GET /api/telemetry/stats/timeline
+func GetTelemetryTimelineStats(c *gin.Context) {
+	hours, _ := strconv.Atoi(c.Query("hours"))
+	if hours <= 0 {
+		hours = 24 // 默认24小时
+	}
+
+	stats, err := model.GetTelemetryTimelineStats(hours)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    stats,
+	})
+}
+

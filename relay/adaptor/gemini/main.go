@@ -516,34 +516,25 @@ func responseGeminiChat2OpenAI(response *ChatResponse) *openai.TextResponse {
 				choice.Message.ToolCalls = getToolCalls(&candidate)
 				choice.FinishReason = "tool_calls"
 			} else {
-				var builder strings.Builder
-				isInThought := false
-				for partIdx, part := range candidate.Content.Parts {
-					if partIdx > 0 {
-						builder.WriteString("\n")
+				var contentBuilder strings.Builder
+				var reasoningBuilder strings.Builder
+				for _, part := range candidate.Content.Parts {
+					if part.Thought != nil && *part.Thought {
+						if reasoningBuilder.Len() > 0 {
+							reasoningBuilder.WriteString("\n")
+						}
+						reasoningBuilder.WriteString(part.Text)
+					} else {
+						if contentBuilder.Len() > 0 {
+							contentBuilder.WriteString("\n")
+						}
+						contentBuilder.WriteString(part.Text)
 					}
-
-					// Add <thought> tag at the beginning of thought content
-					if part.Thought != nil && *part.Thought && !isInThought {
-						builder.WriteString("<thought>")
-						isInThought = true
-					}
-
-					// Add </thought> tag when transitioning from thought to non-thought
-					if (part.Thought == nil || !*part.Thought) && isInThought {
-						builder.WriteString("</thought>")
-						isInThought = false
-					}
-
-					builder.WriteString(part.Text)
 				}
-
-				// Close thought tag if still open at the end
-				if isInThought {
-					builder.WriteString("</thought>")
+				choice.Message.Content = contentBuilder.String()
+				if reasoningBuilder.Len() > 0 {
+					choice.Message.ReasoningContent = reasoningBuilder.String()
 				}
-
-				choice.Message.Content = builder.String()
 			}
 		} else {
 			choice.Message.Content = ""
@@ -556,7 +547,6 @@ func responseGeminiChat2OpenAI(response *ChatResponse) *openai.TextResponse {
 
 func streamResponseGeminiChat2OpenAI(geminiResponse *ChatResponse, modelName string, isFirstThoughtChunk *bool, isInThought *bool) *openai.ChatCompletionsStreamResponse {
 	var choice openai.ChatCompletionsStreamResponseChoice
-	content := geminiResponse.GetResponseText()
 	choice.Delta.Role = "assistant"
 
 	// Check if this is thought content
@@ -581,27 +571,16 @@ func streamResponseGeminiChat2OpenAI(geminiResponse *ChatResponse, modelName str
 
 		part := parts[0]
 		if part.Thought != nil && *part.Thought {
-			// This is thought content - add <thought> tag on first chunk
-			if !*isInThought {
-				content = "<thought>" + content
-				*isInThought = true
-				*isFirstThoughtChunk = true
-			}
-			choice.Delta.ExtraContent = map[string]interface{}{
-				"google": map[string]interface{}{
-					"thought": true,
-				},
-			}
-		} else if *isInThought {
-			// This is the first non-thought content after thought - add </thought> tag
-			content = "</thought>" + content
-			*isInThought = false
+			// This is thought content
+			choice.Delta.ReasoningContent = part.Text
+			choice.Delta.Content = ""
+		} else {
+			choice.Delta.Content = part.Text
 		}
+	} else {
+		choice.Delta.Content = geminiResponse.GetResponseText()
 	}
 
-	choice.Delta.Content = content
-
-	//choice.FinishReason = &constant.StopFinishReason
 	var response openai.ChatCompletionsStreamResponse
 	response.Id = fmt.Sprintf("chatcmpl-%s", random.GetUUID())
 	response.Created = helper.GetTimestamp()

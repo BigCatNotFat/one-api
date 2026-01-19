@@ -34,6 +34,10 @@ func SetApiRouter(router *gin.Engine) {
 		// 公开的令牌查询接口
 		apiRouter.GET("/query_token", controller.QueryTokenQuota)
 
+		// 论文搜索接口
+		apiRouter.Any("/paper_semantic_search", controller.PaperSemanticSearch)
+		apiRouter.Any("/paper_boolean_search", controller.PaperBooleanSearch)
+
 		userRoute := apiRouter.Group("/user")
 		{
 			userRoute.POST("/register", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.Register)

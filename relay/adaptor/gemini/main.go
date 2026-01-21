@@ -425,9 +425,17 @@ func ConvertEmbeddingRequest(request model.GeneralOpenAIRequest) *BatchEmbedding
 	}
 }
 
+// UsageMetadata contains token usage information returned by Gemini API
+type UsageMetadata struct {
+	PromptTokenCount     int `json:"promptTokenCount"`
+	CandidatesTokenCount int `json:"candidatesTokenCount"`
+	TotalTokenCount      int `json:"totalTokenCount"`
+}
+
 type ChatResponse struct {
 	Candidates     []ChatCandidate    `json:"candidates"`
 	PromptFeedback ChatPromptFeedback `json:"promptFeedback"`
+	UsageMetadata  *UsageMetadata     `json:"usageMetadata,omitempty"`
 }
 
 func (g *ChatResponse) GetResponseText() string {
@@ -607,7 +615,7 @@ func embeddingResponseGemini2OpenAI(response *EmbeddingResponse) *openai.Embeddi
 	return &openAIEmbeddingResponse
 }
 
-func StreamHandler(c *gin.Context, resp *http.Response, modelName string) (*model.ErrorWithStatusCode, string) {
+func StreamHandler(c *gin.Context, resp *http.Response, modelName string, promptTokens int) (*model.ErrorWithStatusCode, *model.Usage) {
 	responseText := ""
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Split(bufio.ScanLines)
@@ -617,6 +625,9 @@ func StreamHandler(c *gin.Context, resp *http.Response, modelName string) (*mode
 	// Track thought state across chunks
 	isFirstThoughtChunk := false
 	isInThought := false
+	
+	// Track usage metadata from the last chunk (Gemini only sends complete usageMetadata in the final chunk)
+	var lastUsageMetadata *UsageMetadata
 
 	for scanner.Scan() {
 		data := scanner.Text()
@@ -637,6 +648,11 @@ func StreamHandler(c *gin.Context, resp *http.Response, modelName string) (*mode
 		// Debug: log raw response to see Gemini's format
 		if config.DebugEnabled {
 			logger.SysLog("Gemini raw response: " + data)
+		}
+		
+		// Capture usageMetadata if present (usually in the last chunk)
+		if geminiResponse.UsageMetadata != nil {
+			lastUsageMetadata = geminiResponse.UsageMetadata
 		}
 
 		response := streamResponseGeminiChat2OpenAI(&geminiResponse, modelName, &isFirstThoughtChunk, &isInThought)
@@ -660,10 +676,28 @@ func StreamHandler(c *gin.Context, resp *http.Response, modelName string) (*mode
 
 	err := resp.Body.Close()
 	if err != nil {
-		return openai.ErrorWrapper(err, "close_response_body_failed", http.StatusInternalServerError), ""
+		return openai.ErrorWrapper(err, "close_response_body_failed", http.StatusInternalServerError), nil
 	}
 
-	return nil, responseText
+	// Calculate usage: prefer Gemini's native token count, fallback to manual calculation
+	var usage model.Usage
+	if lastUsageMetadata != nil {
+		usage = model.Usage{
+			PromptTokens:     lastUsageMetadata.PromptTokenCount,
+			CompletionTokens: lastUsageMetadata.CandidatesTokenCount,
+			TotalTokens:      lastUsageMetadata.TotalTokenCount,
+		}
+	} else {
+		// Fallback to manual calculation
+		completionTokens := openai.CountTokenText(responseText, modelName)
+		usage = model.Usage{
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      promptTokens + completionTokens,
+		}
+	}
+
+	return nil, &usage
 }
 
 func Handler(c *gin.Context, resp *http.Response, promptTokens int, modelName string) (*model.ErrorWithStatusCode, *model.Usage) {
@@ -693,11 +727,23 @@ func Handler(c *gin.Context, resp *http.Response, promptTokens int, modelName st
 	}
 	fullTextResponse := responseGeminiChat2OpenAI(&geminiResponse)
 	fullTextResponse.Model = modelName
-	completionTokens := openai.CountTokenText(geminiResponse.GetResponseText(), modelName)
-	usage := model.Usage{
-		PromptTokens:     promptTokens,
-		CompletionTokens: completionTokens,
-		TotalTokens:      promptTokens + completionTokens,
+	
+	// Use Gemini's native token count if available, otherwise fallback to manual calculation
+	var usage model.Usage
+	if geminiResponse.UsageMetadata != nil {
+		usage = model.Usage{
+			PromptTokens:     geminiResponse.UsageMetadata.PromptTokenCount,
+			CompletionTokens: geminiResponse.UsageMetadata.CandidatesTokenCount,
+			TotalTokens:      geminiResponse.UsageMetadata.TotalTokenCount,
+		}
+	} else {
+		// Fallback to manual calculation for older API versions
+		completionTokens := openai.CountTokenText(geminiResponse.GetResponseText(), modelName)
+		usage = model.Usage{
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			TotalTokens:      promptTokens + completionTokens,
+		}
 	}
 	fullTextResponse.Usage = usage
 	jsonResponse, err := json.Marshal(fullTextResponse)

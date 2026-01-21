@@ -81,6 +81,9 @@ func ReceiveTelemetry(c *gin.Context) {
 		return
 	}
 
+	// 计算使用度分数
+	usageScore := calculateUsageScore(payload.Statistics)
+
 	// 创建主事件记录
 	event := &model.TelemetryEvent{
 		UserId:          payload.UserId,
@@ -88,6 +91,7 @@ func ReceiveTelemetry(c *gin.Context) {
 		Version:         payload.Version,
 		ClientTimestamp: payload.Timestamp,
 		ServerTimestamp: time.Now().UnixMilli(),
+		UsageScore:      usageScore,
 	}
 
 	if err := model.CreateTelemetryEvent(event); err != nil {
@@ -434,3 +438,54 @@ func GetTelemetryTimelineStats(c *gin.Context) {
 	})
 }
 
+// calculateUsageScore 计算使用度分数
+// 简单将所有操作数量相加，分数越高表示使用率越高，分数为0表示没有使用
+func calculateUsageScore(stats *AggregatedStatistics) int {
+	if stats == nil {
+		return 0
+	}
+
+	score := 0
+
+	// 聊天次数
+	if stats.Chat != nil {
+		for _, modes := range stats.Chat {
+			for _, count := range modes {
+				score += count
+			}
+		}
+	}
+
+	// 工具使用次数（成功+失败）
+	if stats.Tools != nil {
+		for _, tool := range stats.Tools {
+			score += tool.Success + tool.Failed
+		}
+	}
+
+	// 工具审批次数（批准+拒绝）
+	if stats.ToolApproval != nil {
+		for _, approval := range stats.ToolApproval {
+			score += approval.Approved + approval.Rejected
+		}
+	}
+
+	// 文本操作次数
+	if stats.TextActions != nil {
+		for _, action := range stats.TextActions {
+			score += action.Used + action.Accepted + action.Rejected
+		}
+	}
+
+	// 会话次数
+	if stats.Session != nil {
+		score += stats.Session.Started + stats.Session.Ended
+	}
+
+	// UI 交互（分支创建）
+	if stats.UI != nil {
+		score += stats.UI.BranchCreated
+	}
+
+	return score
+}

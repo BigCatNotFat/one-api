@@ -9,12 +9,13 @@ import (
 
 // TelemetryEvent 遥测事件主表
 type TelemetryEvent struct {
-	Id              int64  `json:"id" gorm:"primaryKey;autoIncrement"`
-	UserId          string `json:"user_id" gorm:"type:varchar(36);index;not null"`           // 用户匿名 ID (UUID)
-	SessionId       string `json:"session_id" gorm:"type:varchar(36);index;not null"`        // 会话 ID (UUID)
-	Version         string `json:"version" gorm:"type:varchar(20)"`                          // 插件版本号
-	ClientTimestamp int64  `json:"client_timestamp" gorm:"bigint"`                           // 客户端时间戳（毫秒）
-	ServerTimestamp int64  `json:"server_timestamp" gorm:"bigint;index"`                     // 服务器接收时间戳
+	Id              int64     `json:"id" gorm:"primaryKey;autoIncrement"`
+	UserId          string    `json:"user_id" gorm:"type:varchar(36);index;not null"`  // 用户匿名 ID (UUID)
+	SessionId       string    `json:"session_id" gorm:"type:varchar(36);index;not null"` // 会话 ID (UUID)
+	Version         string    `json:"version" gorm:"type:varchar(20)"`                 // 插件版本号
+	ClientTimestamp int64     `json:"client_timestamp" gorm:"bigint"`                  // 客户端时间戳（毫秒）
+	ServerTimestamp int64     `json:"server_timestamp" gorm:"bigint;index"`            // 服务器接收时间戳
+	UsageScore      int       `json:"usage_score" gorm:"default:0"`                    // 使用度分数
 	CreatedAt       time.Time `json:"created_at" gorm:"autoCreateTime"`
 }
 
@@ -351,14 +352,15 @@ func GetTelemetryToolApprovalStats(startTimestamp, endTimestamp int64) ([]*Telem
 
 // TelemetryTimelineStat 时间轴统计结构（每半小时一个数据点）
 type TelemetryTimelineStat struct {
-	TimeSlot       string `json:"time_slot"`       // 时间段标识 (格式: "2024-01-15 14:00" 或 "2024-01-15 14:30")
-	Timestamp      int64  `json:"timestamp"`       // 时间段起始时间戳（毫秒）
-	ActiveUsers    int64  `json:"active_users"`    // 活跃用户数
-	EventCount     int64  `json:"event_count"`     // 事件数量
-	SessionCount   int64  `json:"session_count"`   // 会话数量
-	ChatCount      int64  `json:"chat_count"`      // 聊天次数
-	ToolSuccessCount int64 `json:"tool_success_count"` // 工具成功次数
-	ToolFailedCount  int64 `json:"tool_failed_count"`  // 工具失败次数
+	TimeSlot         string  `json:"time_slot"`          // 时间段标识 (格式: "2024-01-15 14:00" 或 "2024-01-15 14:30")
+	Timestamp        int64   `json:"timestamp"`          // 时间段起始时间戳（毫秒）
+	ActiveUsers      int64   `json:"active_users"`       // 活跃用户数
+	EventCount       int64   `json:"event_count"`        // 事件数量
+	SessionCount     int64   `json:"session_count"`      // 会话数量
+	ChatCount        int64   `json:"chat_count"`         // 聊天次数
+	ToolSuccessCount int64   `json:"tool_success_count"` // 工具成功次数
+	ToolFailedCount  int64   `json:"tool_failed_count"`  // 工具失败次数
+	AvgUsageScore    float64 `json:"avg_usage_score"`    // 平均使用度分数
 }
 
 // GetTelemetryTimelineStats 获取时间轴统计（按半小时分组，最近24小时）
@@ -412,14 +414,15 @@ func GetTelemetryTimelineStats(hours int) ([]*TelemetryTimelineStat, error) {
 
 	// 查询事件统计
 	type EventStat struct {
-		TimeSlot     int64 `gorm:"column:time_slot"`
-		ActiveUsers  int64 `gorm:"column:active_users"`
-		EventCount   int64 `gorm:"column:event_count"`
-		SessionCount int64 `gorm:"column:session_count"`
+		TimeSlot      int64   `gorm:"column:time_slot"`
+		ActiveUsers   int64   `gorm:"column:active_users"`
+		EventCount    int64   `gorm:"column:event_count"`
+		SessionCount  int64   `gorm:"column:session_count"`
+		AvgUsageScore float64 `gorm:"column:avg_usage_score"`
 	}
 	var eventStats []EventStat
 	err := DB.Model(&TelemetryEvent{}).
-		Select(timeSlotExpr+" as time_slot, COUNT(DISTINCT user_id) as active_users, COUNT(*) as event_count, COUNT(DISTINCT session_id) as session_count").
+		Select(timeSlotExpr+" as time_slot, COUNT(DISTINCT user_id) as active_users, COUNT(*) as event_count, COUNT(DISTINCT session_id) as session_count, AVG(usage_score) as avg_usage_score").
 		Where("client_timestamp >= ? AND client_timestamp < ?", startTime, endTime).
 		Group("time_slot").
 		Find(&eventStats).Error
@@ -433,6 +436,7 @@ func GetTelemetryTimelineStats(hours int) ([]*TelemetryTimelineStat, error) {
 			slot.ActiveUsers = stat.ActiveUsers
 			slot.EventCount = stat.EventCount
 			slot.SessionCount = stat.SessionCount
+			slot.AvgUsageScore = stat.AvgUsageScore
 		}
 	}
 

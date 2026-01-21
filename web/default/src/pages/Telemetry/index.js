@@ -126,7 +126,18 @@ const Telemetry = () => {
     chatCount: d.chat_count || 0,
     toolSuccess: d.tool_success_count || 0,
     toolFailed: d.tool_failed_count || 0,
+    avgUsageScore: Math.round((d.avg_usage_score || 0) * 100) / 100,
   }));
+
+  // 各指标的图表配置
+  const singleChartConfigs = [
+    { dataKey: 'activeUsers', name: '活跃用户', color: '#2185d0', total: timelineSummary.totalUsers },
+    { dataKey: 'eventCount', name: '事件数', color: '#21ba45', total: timelineSummary.totalEvents },
+    { dataKey: 'chatCount', name: '聊天次数', color: '#f2711c', total: timelineSummary.totalChats },
+    { dataKey: 'toolSuccess', name: '工具成功', color: '#00b5ad', total: timelineStats.reduce((sum, d) => sum + (d.tool_success_count || 0), 0) },
+    { dataKey: 'toolFailed', name: '工具失败', color: '#db2828', total: timelineStats.reduce((sum, d) => sum + (d.tool_failed_count || 0), 0) },
+    { dataKey: 'avgUsageScore', name: '平均使用度', color: '#a333c8', total: (timelineStats.reduce((sum, d) => sum + (d.avg_usage_score || 0), 0) / (timelineStats.length || 1)).toFixed(2), isAvg: true },
+  ];
 
   if (!isAdmin()) {
     return (
@@ -228,82 +239,72 @@ const Telemetry = () => {
             </Statistic.Group>
 
             {chartData.length > 0 ? (
-              <div style={{ width: '100%', height: 350 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart
-                    data={chartData}
-                    margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-                    <XAxis
-                      dataKey="time"
-                      tick={{ fontSize: 10 }}
-                      interval={Math.floor(chartData.length / 8)}
-                    />
-                    <YAxis tick={{ fontSize: 11 }} />
-                    <Tooltip
-                      labelFormatter={(label, payload) => {
-                        if (payload && payload.length > 0) {
-                          return payload[0].payload.fullTime;
-                        }
-                        return label;
-                      }}
-                      contentStyle={{
-                        backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                        border: '1px solid #ddd',
-                        borderRadius: 4,
-                      }}
-                    />
-                    <Legend />
-                    <Line
-                      type="monotone"
-                      dataKey="activeUsers"
-                      name="活跃用户"
-                      stroke="#2185d0"
-                      strokeWidth={2}
-                      dot={false}
-                      activeDot={{ r: 4 }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="eventCount"
-                      name="事件数"
-                      stroke="#21ba45"
-                      strokeWidth={2}
-                      dot={false}
-                      activeDot={{ r: 4 }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="chatCount"
-                      name="聊天次数"
-                      stroke="#f2711c"
-                      strokeWidth={2}
-                      dot={false}
-                      activeDot={{ r: 4 }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="toolSuccess"
-                      name="工具成功"
-                      stroke="#00b5ad"
-                      strokeWidth={2}
-                      dot={false}
-                      activeDot={{ r: 4 }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="toolFailed"
-                      name="工具失败"
-                      stroke="#db2828"
-                      strokeWidth={2}
-                      strokeDasharray="5 5"
-                      dot={false}
-                      activeDot={{ r: 4 }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
+              <Grid columns={3} stackable doubling>
+                {singleChartConfigs.map((config, index) => (
+                  <Grid.Column key={index}>
+                    <div style={{ 
+                      border: '1px solid #e0e0e0', 
+                      borderRadius: 8, 
+                      padding: '12px',
+                      backgroundColor: '#fafafa',
+                      marginBottom: 8
+                    }}>
+                      <div style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between', 
+                        alignItems: 'center',
+                        marginBottom: 8
+                      }}>
+                        <span style={{ fontWeight: 600, color: config.color }}>{config.name}</span>
+                        <span style={{ 
+                          backgroundColor: config.color + '20',
+                          color: config.color,
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                          fontSize: 12,
+                          fontWeight: 600
+                        }}>
+                          {config.isAvg ? `均值: ${config.total}` : `总计: ${config.total}`}
+                        </span>
+                      </div>
+                      <ResponsiveContainer width="100%" height={150}>
+                        <LineChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                          <XAxis 
+                            dataKey="time" 
+                            tick={{ fontSize: 9 }} 
+                            interval={Math.floor(chartData.length / 4)}
+                          />
+                          <YAxis tick={{ fontSize: 9 }} />
+                          <Tooltip
+                            labelFormatter={(label, payload) => {
+                              if (payload && payload.length > 0) {
+                                return payload[0].payload.fullTime;
+                              }
+                              return label;
+                            }}
+                            contentStyle={{
+                              backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                              border: '1px solid #ddd',
+                              borderRadius: 4,
+                              fontSize: 12
+                            }}
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey={config.dataKey}
+                            name={config.name}
+                            stroke={config.color}
+                            strokeWidth={2}
+                            dot={false}
+                            activeDot={{ r: 3 }}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </Grid.Column>
+                ))}
+              </Grid>
             ) : (
               <p style={{ color: '#999', textAlign: 'center', padding: '40px 0' }}>暂无时间轴数据</p>
             )}

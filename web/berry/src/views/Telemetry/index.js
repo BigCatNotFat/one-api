@@ -227,14 +227,14 @@ const Telemetry = () => {
     { name: '失败', data: toolStats.map(t => parseInt(t.failed_count)) }
   ];
 
-  // 时间轴图表配置 - 多指标堆叠区域图
-  const timelineChartOptions = {
+  // 生成单个指标的图表配置
+  const createSingleChartOptions = (title, color, isFloat = false) => ({
     chart: {
       type: 'area',
-      stacked: false,
-      toolbar: { show: true },
-      zoom: { enabled: true },
-      animations: { enabled: true }
+      toolbar: { show: false },
+      zoom: { enabled: false },
+      animations: { enabled: true },
+      sparkline: { enabled: false }
     },
     dataLabels: { enabled: false },
     stroke: { curve: 'smooth', width: 2 },
@@ -247,36 +247,25 @@ const Telemetry = () => {
       }
     },
     xaxis: {
-      categories: timelineStats.map(d => {
-        const time = d.time_slot.split(' ')[1] || d.time_slot;
-        return time;
-      }),
+      categories: timelineStats.map(d => d.time_slot.split(' ')[1] || d.time_slot),
       labels: {
         rotate: -45,
-        style: { fontSize: '10px' },
-        // 只显示部分标签避免拥挤
+        style: { fontSize: '9px' },
         formatter: (value, timestamp, opts) => {
           if (opts && opts.i !== undefined) {
-            // 每隔几个显示一个标签
-            const interval = timelineStats.length > 48 ? 6 : timelineStats.length > 24 ? 4 : 2;
+            const interval = timelineStats.length > 48 ? 8 : timelineStats.length > 24 ? 4 : 2;
             return opts.i % interval === 0 ? value : '';
           }
           return value;
         }
-      },
-      tickAmount: timelineStats.length > 48 ? 12 : 8
-    },
-    yaxis: [
-      {
-        title: { text: '用户/事件数', style: { fontSize: '12px' } },
-        labels: { formatter: (val) => Math.round(val) }
-      },
-      {
-        opposite: true,
-        title: { text: '工具调用数', style: { fontSize: '12px' } },
-        labels: { formatter: (val) => Math.round(val) }
       }
-    ],
+    },
+    yaxis: {
+      labels: { 
+        formatter: (val) => isFloat ? val.toFixed(1) : Math.round(val),
+        style: { fontSize: '10px' }
+      }
+    },
     tooltip: {
       x: {
         formatter: (val, opts) => {
@@ -285,48 +274,54 @@ const Telemetry = () => {
           }
           return val;
         }
-      },
-      shared: true,
-      intersect: false
+      }
     },
-    legend: {
-      position: 'top',
-      horizontalAlign: 'center'
-    },
-    colors: [
-      theme.palette.primary.main,
-      theme.palette.success.main,
-      theme.palette.warning.main,
-      theme.palette.info.main,
-      theme.palette.error.main
-    ]
-  };
+    colors: [color],
+    title: {
+      text: title,
+      align: 'left',
+      style: { fontSize: '14px', fontWeight: 600 }
+    }
+  });
 
-  const timelineChartSeries = [
+  // 各指标的图表配置
+  const chartConfigs = [
     {
-      name: '活跃用户',
-      type: 'area',
-      data: timelineStats.map(d => d.active_users || 0)
+      title: '活跃用户',
+      color: theme.palette.primary.main,
+      data: timelineStats.map(d => d.active_users || 0),
+      total: timelineStats.reduce((sum, d) => sum + (d.active_users || 0), 0)
     },
     {
-      name: '事件数',
-      type: 'area',
-      data: timelineStats.map(d => d.event_count || 0)
+      title: '事件数',
+      color: theme.palette.success.main,
+      data: timelineStats.map(d => d.event_count || 0),
+      total: timelineStats.reduce((sum, d) => sum + (d.event_count || 0), 0)
     },
     {
-      name: '聊天次数',
-      type: 'area',
-      data: timelineStats.map(d => d.chat_count || 0)
+      title: '聊天次数',
+      color: theme.palette.warning.main,
+      data: timelineStats.map(d => d.chat_count || 0),
+      total: timelineStats.reduce((sum, d) => sum + (d.chat_count || 0), 0)
     },
     {
-      name: '工具成功',
-      type: 'line',
-      data: timelineStats.map(d => d.tool_success_count || 0)
+      title: '工具成功',
+      color: theme.palette.info.main,
+      data: timelineStats.map(d => d.tool_success_count || 0),
+      total: timelineStats.reduce((sum, d) => sum + (d.tool_success_count || 0), 0)
     },
     {
-      name: '工具失败',
-      type: 'line',
-      data: timelineStats.map(d => d.tool_failed_count || 0)
+      title: '工具失败',
+      color: theme.palette.error.main,
+      data: timelineStats.map(d => d.tool_failed_count || 0),
+      total: timelineStats.reduce((sum, d) => sum + (d.tool_failed_count || 0), 0)
+    },
+    {
+      title: '平均使用度',
+      color: theme.palette.secondary.main,
+      data: timelineStats.map(d => Math.round((d.avg_usage_score || 0) * 100) / 100),
+      total: (timelineStats.reduce((sum, d) => sum + (d.avg_usage_score || 0), 0) / (timelineStats.length || 1)).toFixed(2),
+      isFloat: true
     }
   ];
 
@@ -455,32 +450,40 @@ const Telemetry = () => {
               </Box>
             </Box>
             {timelineStats.length > 0 ? (
-              <>
-                <Chart options={timelineChartOptions} series={timelineChartSeries} type="area" height={350} />
-                {/* 时间轴快速统计摘要 */}
-                <Box sx={{ mt: 2, display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'center' }}>
-                  <Chip
-                    label={`总活跃用户: ${timelineStats.reduce((sum, d) => sum + (d.active_users || 0), 0)}`}
-                    color="primary"
-                    variant="outlined"
-                  />
-                  <Chip
-                    label={`总事件数: ${timelineStats.reduce((sum, d) => sum + (d.event_count || 0), 0)}`}
-                    color="success"
-                    variant="outlined"
-                  />
-                  <Chip
-                    label={`总聊天次数: ${timelineStats.reduce((sum, d) => sum + (d.chat_count || 0), 0)}`}
-                    color="warning"
-                    variant="outlined"
-                  />
-                  <Chip
-                    label={`工具调用: ${timelineStats.reduce((sum, d) => sum + (d.tool_success_count || 0) + (d.tool_failed_count || 0), 0)}`}
-                    color="info"
-                    variant="outlined"
-                  />
-                </Box>
-              </>
+              <Grid container spacing={2}>
+                {chartConfigs.map((config, index) => (
+                  <Grid item xs={12} md={6} lg={4} key={index}>
+                    <Box sx={{ 
+                      border: '1px solid', 
+                      borderColor: 'divider', 
+                      borderRadius: 2, 
+                      p: 1,
+                      backgroundColor: 'background.paper'
+                    }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1, px: 1 }}>
+                        <Typography variant="subtitle2" color="textSecondary">
+                          {config.title}
+                        </Typography>
+                        <Chip 
+                          label={config.isFloat ? `均值: ${config.total}` : `总计: ${config.total}`}
+                          size="small"
+                          sx={{ 
+                            backgroundColor: config.color + '20',
+                            color: config.color,
+                            fontWeight: 600
+                          }}
+                        />
+                      </Box>
+                      <Chart 
+                        options={createSingleChartOptions(config.title, config.color, config.isFloat)} 
+                        series={[{ name: config.title, data: config.data }]} 
+                        type="area" 
+                        height={180} 
+                      />
+                    </Box>
+                  </Grid>
+                ))}
+              </Grid>
             ) : (
               <Box sx={{ height: 350, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <Typography color="textSecondary">暂无时间轴数据</Typography>

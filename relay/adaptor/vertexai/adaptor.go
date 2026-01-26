@@ -85,9 +85,21 @@ func (a *Adaptor) GetRequestURL(meta *meta.Meta) (string, error) {
 			suffix,
 		), nil
 	}
+
+	// Global endpoint requires special handling:
+	// - Host: https://aiplatform.googleapis.com (without region prefix)
+	// - Location in path: "global"
+	// Regional endpoints use: https://{region}-aiplatform.googleapis.com
+	var host string
+	if meta.Config.Region == "global" {
+		host = "https://aiplatform.googleapis.com"
+	} else {
+		host = fmt.Sprintf("https://%s-aiplatform.googleapis.com", meta.Config.Region)
+	}
+
 	return fmt.Sprintf(
-		"https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/google/models/%s:%s",
-		meta.Config.Region,
+		"%s/v1/projects/%s/locations/%s/publishers/google/models/%s:%s",
+		host,
 		meta.Config.VertexAIProjectID,
 		meta.Config.Region,
 		meta.ActualModelName,

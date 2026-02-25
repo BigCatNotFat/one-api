@@ -326,6 +326,7 @@ func ConvertRequest(textRequest model.GeneralOpenAIRequest) (*ChatRequest, error
 		// Preserve OpenAI tool_calls history (assistant -> model.functionCall parts)
 		// Also check for "model" role since some clients may directly use Gemini's role name
 		if (message.Role == "assistant" || message.Role == "model") && len(message.ToolCalls) > 0 {
+			isFirstFunctionCall := true
 			for _, tc := range message.ToolCalls {
 				var args any
 				switch v := tc.Function.Arguments.(type) {
@@ -341,21 +342,20 @@ func ConvertRequest(textRequest model.GeneralOpenAIRequest) (*ChatRequest, error
 				part := Part{
 					FunctionCall: funcCall,
 				}
-				// Gemini 3: pass back thought_signature at Part level only (NOT inside functionCall!)
-				if config.DebugEnabled {
-					tcBytes, _ := json.Marshal(tc)
-					logger.SysLog(fmt.Sprintf("ConvertRequest ToolCall: %s, ExtraContent: %v", string(tcBytes), tc.ExtraContent))
-				}
 				if tc.ExtraContent != nil {
 					if google, ok := tc.ExtraContent["google"].(map[string]interface{}); ok {
 						if sig, ok := google["thought_signature"].(string); ok && sig != "" {
-							part.ThoughtSignature = sig // Only set at Part level!
-							if config.DebugEnabled {
-								logger.SysLog(fmt.Sprintf("ConvertRequest: Found thought_signature: %s", sig[:50]))
-							}
+							part.ThoughtSignature = sig
 						}
 					}
 				}
+				// Gemini 3 requires thought_signature on the first functionCall part per step.
+				// When downstream clients don't preserve extra_content, use a dummy signature
+				// to bypass validation (officially documented workaround).
+				if part.ThoughtSignature == "" && isFirstFunctionCall {
+					part.ThoughtSignature = "context_engineering_is_the_way_to_go"
+				}
+				isFirstFunctionCall = false
 				parts = append(parts, part)
 			}
 		}

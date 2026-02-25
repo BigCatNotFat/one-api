@@ -130,19 +130,21 @@ var ModelRatio = map[string]float64{
 	"gemini-1.5-flash-001":                0.075 * MILLI_USD,
 	"gemini-1.5-flash-8b":                 0.0375 * MILLI_USD,
 	"gemini-2.0-flash-exp":                0.075 * MILLI_USD,
-	"gemini-2.0-flash":                    0.15 * MILLI_USD,
-	"gemini-2.0-flash-001":                0.15 * MILLI_USD,
-	"gemini-2.0-flash-lite-preview-02-05": 0.075 * MILLI_USD,
+	"gemini-2.0-flash":                    0.10 * MILLI_USD,  // $0.10/1M input
+	"gemini-2.0-flash-001":                0.10 * MILLI_USD,  // $0.10/1M input
+	"gemini-2.0-flash-lite-preview-02-05": 0.075 * MILLI_USD, // $0.075/1M input
+	"gemini-2.0-flash-lite":               0.075 * MILLI_USD, // $0.075/1M input
 	"gemini-2.0-flash-thinking-exp-01-21": 0.075 * MILLI_USD,
 	"gemini-2.0-pro-exp-02-05":            1.25 * MILLI_USD,
-	"gemini-2.5-flash":                    0.15 * MILLI_USD, // Same as gemini-2.0-flash
-	// Gemini 2.5 (best-effort defaults; adjust in settings if needed)
-	"gemini-2.5-flash-lite": 0.075 * MILLI_USD, // align with flash-lite preview
-	"gemini-2.5-pro":        1.25 * MILLI_USD,  // align with 1.5-pro
-	// Gemini 3 (preview) (best-effort defaults; adjust in settings if needed)
-	"gemini-3-flash-preview":      0.15 * MILLI_USD,
-	"gemini-3-pro-preview":        1.25 * MILLI_USD,
-	"gemini-3-pro-image-preview":  1.25 * MILLI_USD,
+	// Gemini 2.5 (https://ai.google.dev/gemini-api/docs/pricing)
+	"gemini-2.5-flash":      0.30 * MILLI_USD, // $0.30/1M input, $2.50/1M output
+	"gemini-2.5-flash-lite": 0.10 * MILLI_USD, // $0.10/1M input, $0.40/1M output
+	"gemini-2.5-pro":        1.25 * MILLI_USD, // $1.25/1M input, $10.00/1M output (≤200K)
+	// Gemini 3 (https://ai.google.dev/gemini-api/docs/pricing)
+	"gemini-3-flash-preview":     0.50 * MILLI_USD, // $0.50/1M input, $3.00/1M output
+	"gemini-3-pro-preview":       2.0 * MILLI_USD,  // $2.00/1M input, $12.00/1M output
+	"gemini-3-pro-image-preview": 2.0 * MILLI_USD,  // $2.00/1M input, $12.00/1M output
+	"gemini-3.1-pro-preview":     2.0 * MILLI_USD,  // $2.00/1M input, $12.00/1M output
 	"aqa":                                 1,
 	// https://open.bigmodel.cn/pricing
 	"glm-zero-preview": 0.01 * RMB,
@@ -638,6 +640,18 @@ var CompletionRatio = map[string]float64{
 	// deepseek
 	"deepseek-chat":     0.28 / 0.14,
 	"deepseek-reasoner": 2.19 / 0.55,
+	// Gemini (output/input ratios differ from the default 3x)
+	"gemini-2.0-flash":                    0.40 / 0.10,  // 4x
+	"gemini-2.0-flash-001":                0.40 / 0.10,  // 4x
+	"gemini-2.0-flash-lite-preview-02-05": 0.30 / 0.075, // 4x
+	"gemini-2.0-flash-lite":               0.30 / 0.075, // 4x
+	"gemini-2.5-flash":                    2.50 / 0.30,  // ~8.3x
+	"gemini-2.5-flash-lite":               0.40 / 0.10,  // 4x
+	"gemini-2.5-pro":                      10.00 / 1.25, // 8x
+	"gemini-3-flash-preview":              3.00 / 0.50,  // 6x
+	"gemini-3-pro-preview":                12.00 / 2.00, // 6x
+	"gemini-3-pro-image-preview":          12.00 / 2.00, // 6x
+	"gemini-3.1-pro-preview":              12.00 / 2.00, // 6x
 }
 
 var (

@@ -20,15 +20,17 @@ var ModelList = []string{
 	"gemini-1.5-flash-001", "gemini-1.5-flash-002",
 	"gemini-2.0-flash-exp", "gemini-2.0-flash-001",
 	"gemini-2.0-flash-lite-preview-02-05",
+	"gemini-2.0-flash-lite",
 	"gemini-2.0-flash-thinking-exp-01-21",
 	// Gemini 2.5
 	"gemini-2.5-pro",
 	"gemini-2.5-flash",
 	"gemini-2.5-flash-lite",
-	// Gemini 3 (preview)
+	// Gemini 3
 	"gemini-3-flash-preview",
 	"gemini-3-pro-preview",
 	"gemini-3-pro-image-preview",
+	"gemini-3.1-pro-preview",
 }
 
 type Adaptor struct {
